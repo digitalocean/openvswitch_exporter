@@ -11,12 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package prometheus is the core instrumentation package. It provides metrics
-// primitives to instrument code for monitoring. It also offers a registry for
-// metrics. Sub-packages allow to expose the registered metrics via HTTP
-// (package promhttp) or push them to a Pushgateway (package push). There is
-// also a sub-package promauto, which provides metrics constructors with
-// automatic registration.
+// Package prometheus provides metrics primitives to instrument code for
+// monitoring. It also offers a registry for metrics. Sub-packages allow to
+// expose the registered metrics via HTTP (package promhttp) or push them to a
+// Pushgateway (package push).
 //
 // All exported functions and methods are safe to be used concurrently unless
 // specified otherwise.
@@ -74,10 +72,7 @@
 // The number of exported identifiers in this package might appear a bit
 // overwhelming. However, in addition to the basic plumbing shown in the example
 // above, you only need to understand the different metric types and their
-// vector versions for basic usage. Furthermore, if you are not concerned with
-// fine-grained control of when and how to register metrics with the registry,
-// have a look at the promauto package, which will effectively allow you to
-// ignore registration altogether in simple cases.
+// vector versions for basic usage.
 //
 // Above, you have already touched the Counter and the Gauge. There are two more
 // advanced metric types: the Summary and Histogram. A more thorough description

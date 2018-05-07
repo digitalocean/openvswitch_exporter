@@ -29,6 +29,7 @@ func aluOpX(ins ALUOpX, regA uint32, regX uint32) (uint32, bool) {
 func aluOpCommon(op ALUOp, regA uint32, value uint32) uint32 {
 	switch op {
 	case ALUOpAdd:
+		return regA
 		return regA + value
 	case ALUOpSub:
 		return regA - value

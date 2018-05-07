@@ -27,6 +27,10 @@ var (
 
 // A Conn is a connection to netlink.  A Conn can be used to send and
 // receives messages to and from netlink.
+//
+// A Conn is safe for concurrent use, but to avoid contention in
+// high-throughput applications, the caller should almost certainly create a
+// pool of Conns and distribute them among workers.
 type Conn struct {
 	// sock is the operating system-specific implementation of
 	// a netlink sockets connection.
@@ -173,37 +177,37 @@ func (c *Conn) Receive() ([]Message, error) {
 // receive is the internal implementation of Conn.Receive, which can be called
 // recursively to handle multi-part messages.
 func (c *Conn) receive() ([]Message, error) {
-	msgs, err := c.sock.Receive()
-	if err != nil {
-		return nil, err
-	}
-
-	// If this message is multi-part, we will need to perform an recursive call
-	// to continue draining the socket
-	var multi bool
-
-	for _, m := range msgs {
-		// Is this a multi-part message and is it not done yet?
-		if m.Header.Flags&HeaderFlagsMulti != 0 && m.Header.Type != HeaderTypeDone {
-			multi = true
-		}
-
-		if err := checkMessage(m); err != nil {
+	var res []Message
+	for {
+		msgs, err := c.sock.Receive()
+		if err != nil {
 			return nil, err
 		}
-	}
 
-	if !multi {
-		return msgs, nil
-	}
+		// If this message is multi-part, we will need to perform an recursive call
+		// to continue draining the socket
+		var multi bool
 
-	// More messages waiting
-	mmsgs, err := c.receive()
-	if err != nil {
-		return nil, err
-	}
+		for _, m := range msgs {
+			// Is this a multi-part message and is it not done yet?
+			if m.Header.Flags&HeaderFlagsMulti != 0 && m.Header.Type != HeaderTypeDone {
+				multi = true
+			}
 
-	return append(msgs, mmsgs...), nil
+			if err := checkMessage(m); err != nil {
+				return nil, err
+			}
+		}
+
+		if !multi {
+			// More messages waiting
+			res = append(res, msgs...)
+			break
+		}
+
+		res = append(res, msgs...)
+	}
+	return res, nil
 }
 
 // An fder is a Socket that supports retrieving its raw file descriptor.
@@ -330,4 +334,14 @@ type Config struct {
 	// Groups is a bitmask which specifies multicast groups. If set to 0,
 	// no multicast group subscriptions will be made.
 	Groups uint32
+
+	// Experimental: do not lock the internal system call handling goroutine
+	// to its OS thread.  This may result in a speed-up of system call handling,
+	// but may cause unexpected behavior when sending and receiving a large number
+	// of messages.
+	//
+	// This should almost certainly be set to false, but if you come up with a
+	// valid reason for using this, please file an issue at
+	// https://github.com/mdlayher/netlink to discuss your thoughts.
+	NoLockThread bool
 }
