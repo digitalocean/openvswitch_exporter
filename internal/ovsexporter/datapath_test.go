@@ -81,7 +81,7 @@ func Test_datapathCollector(t *testing.T) {
 				// Only bother to check that the hits total metric is present for
 				// both datapaths, to reduce clutter here.
 				`openvswitch_datapath_megaflow_stats_mask_hits_total{datapath="ovs-system"} 5`,
-				`openvswitch_datapath_megaflow_stats_masks_total{datapath="ovs-system"} 6`,
+				`openvswitch_datapath_megaflow_stats_masks{datapath="ovs-system"} 6`,
 				`openvswitch_datapath_stats_flows{datapath="ovs-system"} 4`,
 				`openvswitch_datapath_stats_hits_total{datapath="ovs-system"} 1`,
 				`openvswitch_datapath_stats_hits_total{datapath="ovs-test"} 99`,

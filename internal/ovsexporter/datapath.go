@@ -30,7 +30,7 @@ type datapathCollector struct {
 	StatsLostTotal             *prometheus.Desc
 	StatsFlows                 *prometheus.Desc
 	MegaflowStatsMaskHitsTotal *prometheus.Desc
-	MegaflowStatsMasksTotal    *prometheus.Desc
+	MegaflowStatsMasks         *prometheus.Desc
 
 	listDatapaths func() ([]ovsnl.Datapath, error)
 }
@@ -77,8 +77,8 @@ func newDatapathCollector(fn func() ([]ovsnl.Datapath, error)) prometheus.Collec
 			labels, nil,
 		),
 
-		MegaflowStatsMasksTotal: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, subsystem, "megaflow_stats_masks_total"),
+		MegaflowStatsMasks: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, subsystem, "megaflow_stats_masks"),
 			"Number of megaflow masks present.",
 			labels, nil,
 		),
@@ -95,7 +95,7 @@ func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
 		c.StatsLostTotal,
 		c.StatsFlows,
 		c.MegaflowStatsMaskHitsTotal,
-		c.MegaflowStatsMasksTotal,
+		c.MegaflowStatsMasks,
 	}
 
 	for _, d := range ds {
@@ -144,8 +144,8 @@ func (c *datapathCollector) Collect(ch chan<- prometheus.Metric) {
 				v: d.MegaflowStats.MaskHits,
 			},
 			{
-				d: c.MegaflowStatsMasksTotal,
-				t: prometheus.CounterValue,
+				d: c.MegaflowStatsMasks,
+				t: prometheus.GaugeValue,
 				v: uint64(d.MegaflowStats.Masks),
 			},
 		}
