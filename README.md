@@ -42,9 +42,9 @@ hypervisor $ curl -s http://localhost:9310/metrics | grep openvswitch
 # HELP openvswitch_datapath_megaflow_stats_mask_hits_total Number of megaflow masks used for flow lookups.
 # TYPE openvswitch_datapath_megaflow_stats_mask_hits_total counter
 openvswitch_datapath_megaflow_stats_mask_hits_total{datapath="ovs-system"} 1.51606216e+08
-# HELP openvswitch_datapath_megaflow_stats_masks_total Number of megaflow masks present.
-# TYPE openvswitch_datapath_megaflow_stats_masks_total counter
-openvswitch_datapath_megaflow_stats_masks_total{datapath="ovs-system"} 9
+# HELP openvswitch_datapath_megaflow_stats_masks Number of megaflow masks present.
+# TYPE openvswitch_datapath_megaflow_stats_masks counter
+openvswitch_datapath_megaflow_stats_masks{datapath="ovs-system"} 9
 # HELP openvswitch_datapath_stats_flows Number of flows present.
 # TYPE openvswitch_datapath_stats_flows gauge
 openvswitch_datapath_stats_flows{datapath="ovs-system"} 21
