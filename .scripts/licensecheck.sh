@@ -9,7 +9,9 @@ EXIT=0
 GOFILES=$(find . -path ./vendor -prune -o -name "*.go" -print)
 
 for FILE in $GOFILES; do
-	BLOCK=$(head -n 14 $FILE)
+	BLOCK=$(head -n 2 $FILE)
+
+	echo $BLOCK
 
 	if [ "$BLOCK" != "$EXPECTED" ]; then
 		echo "file missing license: $FILE"
