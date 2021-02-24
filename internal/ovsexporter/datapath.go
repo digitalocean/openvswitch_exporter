@@ -78,7 +78,7 @@ func newDatapathCollector(fn func() ([]ovsnl.Datapath, error)) prometheus.Collec
 
 // Describe implements prometheus.Collector.
 func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
-	ds := []*prometheus.Desc{
+	dps := []*prometheus.Desc{
 		c.StatsHitsTotal,
 		c.StatsMissesTotal,
 		c.StatsLostTotal,
@@ -87,8 +87,8 @@ func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
 		c.MegaflowStatsMasks,
 	}
 
-	for _, d := range ds {
-		ch <- d
+	for _, dp := range dps {
+		ch <- dp
 	}
 }
 
@@ -100,48 +100,48 @@ func (c *datapathCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
-	for _, d := range dps {
+	for _, dp := range dps {
 		// Expose per-datapath metrics using statistics structures.
 		tuples := []struct {
-			d *prometheus.Desc
-			t prometheus.ValueType
-			v uint64
+			desc      *prometheus.Desc
+			valueType prometheus.ValueType
+			value     uint64
 		}{
 			{
-				d: c.StatsHitsTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Hit,
+				desc:      c.StatsHitsTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Hit,
 			},
 			{
-				d: c.StatsMissesTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Missed,
+				desc:      c.StatsMissesTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Missed,
 			},
 			{
-				d: c.StatsLostTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Lost,
+				desc:      c.StatsLostTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Lost,
 			},
 			{
-				d: c.StatsFlows,
-				t: prometheus.GaugeValue,
-				v: d.Stats.Flows,
+				desc:      c.StatsFlows,
+				valueType: prometheus.GaugeValue,
+				value:     dp.Stats.Flows,
 			},
 			{
-				d: c.MegaflowStatsMaskHitsTotal,
-				t: prometheus.CounterValue,
-				v: d.MegaflowStats.MaskHits,
+				desc:      c.MegaflowStatsMaskHitsTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.MegaflowStats.MaskHits,
 			},
 			{
-				d: c.MegaflowStatsMasks,
-				t: prometheus.GaugeValue,
-				v: uint64(d.MegaflowStats.Masks),
+				desc:      c.MegaflowStatsMasks,
+				valueType: prometheus.GaugeValue,
+				value:     uint64(dp.MegaflowStats.Masks),
 			},
 		}
 
-		for _, t := range tuples {
+		for _, tuple := range tuples {
 			// Label each metric with the datapath's name.
-			ch <- prometheus.MustNewConstMetric(t.d, t.t, float64(t.v), d.Name)
+			ch <- prometheus.MustNewConstMetric(tuple.desc, tuple.valueType, float64(tuple.value), dp.Name)
 		}
 	}
 }

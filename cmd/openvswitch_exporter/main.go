@@ -23,7 +23,6 @@ func main() {
 
 	flag.Parse()
 
-	// TODO(mdlayher): consider opening netlink connection on each scrape request.
 	c, err := ovsnl.New()
 	if err != nil {
 		log.Fatalf("failed to connect to Open vSwitch datapath: %v", err)
