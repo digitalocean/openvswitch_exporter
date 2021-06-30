@@ -1,16 +1,5 @@
-// Copyright 2018 DigitalOcean.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright 2018-2021 DigitalOcean.
+// SPDX-License-Identifier: Apache-2.0
 
 package ovsexporter
 
@@ -87,7 +76,7 @@ func newDatapathCollector(fn func() ([]ovsnl.Datapath, error)) prometheus.Collec
 
 // Describe implements prometheus.Collector.
 func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
-	ds := []*prometheus.Desc{
+	dps := []*prometheus.Desc{
 		c.StatsHitsTotal,
 		c.StatsMissesTotal,
 		c.StatsLostTotal,
@@ -96,8 +85,8 @@ func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
 		c.MegaflowStatsMasks,
 	}
 
-	for _, d := range ds {
-		ch <- d
+	for _, dp := range dps {
+		ch <- dp
 	}
 }
 
@@ -113,48 +102,48 @@ func (c *datapathCollector) Collect(ch chan<- prometheus.Metric) {
 		panic(err)
 	}
 
-	for _, d := range dps {
+	for _, dp := range dps {
 		// Expose per-datapath metrics using statistics structures.
 		tuples := []struct {
-			d *prometheus.Desc
-			t prometheus.ValueType
-			v uint64
+			desc      *prometheus.Desc
+			valueType prometheus.ValueType
+			value     uint64
 		}{
 			{
-				d: c.StatsHitsTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Hit,
+				desc:      c.StatsHitsTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Hit,
 			},
 			{
-				d: c.StatsMissesTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Missed,
+				desc:      c.StatsMissesTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Missed,
 			},
 			{
-				d: c.StatsLostTotal,
-				t: prometheus.CounterValue,
-				v: d.Stats.Lost,
+				desc:      c.StatsLostTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.Stats.Lost,
 			},
 			{
-				d: c.StatsFlows,
-				t: prometheus.GaugeValue,
-				v: d.Stats.Flows,
+				desc:      c.StatsFlows,
+				valueType: prometheus.GaugeValue,
+				value:     dp.Stats.Flows,
 			},
 			{
-				d: c.MegaflowStatsMaskHitsTotal,
-				t: prometheus.CounterValue,
-				v: d.MegaflowStats.MaskHits,
+				desc:      c.MegaflowStatsMaskHitsTotal,
+				valueType: prometheus.CounterValue,
+				value:     dp.MegaflowStats.MaskHits,
 			},
 			{
-				d: c.MegaflowStatsMasks,
-				t: prometheus.GaugeValue,
-				v: uint64(d.MegaflowStats.Masks),
+				desc:      c.MegaflowStatsMasks,
+				valueType: prometheus.GaugeValue,
+				value:     uint64(dp.MegaflowStats.Masks),
 			},
 		}
 
-		for _, t := range tuples {
+		for _, tuple := range tuples {
 			// Label each metric with the datapath's name.
-			ch <- prometheus.MustNewConstMetric(t.d, t.t, float64(t.v), d.Name)
+			ch <- prometheus.MustNewConstMetric(tuple.desc, tuple.valueType, float64(tuple.value), dp.Name)
 		}
 	}
 }
