@@ -4,8 +4,6 @@
 package ovsexporter
 
 import (
-	"fmt"
-
 	"github.com/digitalocean/go-openvswitch/ovsnl"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -96,8 +94,12 @@ func (c *datapathCollector) Describe(ch chan<- *prometheus.Desc) {
 func (c *datapathCollector) Collect(ch chan<- prometheus.Metric) {
 	dps, err := c.listDatapaths()
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(c.StatsHitsTotal, fmt.Errorf("error listing datapaths: %v", err))
-		return
+		// NOTE(armax): in the current exporter design, the netlink connection is opened once at
+		// exporter startup. If OVS is restarted or upgraded, the exporter will therefore hold a
+		// stale connection. Instead of persistently return something like a NewInvalidMetric, it
+		// is more effective to trigger a panic, and let a process watchdog like systemd bring
+		// the exporter back to life.
+		panic(err)
 	}
 
 	for _, dp := range dps {
