@@ -6,6 +6,8 @@
 package ovsexporter
 
 import (
+	"context"
+	"log"
 	"sync"
 
 	"github.com/digitalocean/go-openvswitch/ovsnl"
@@ -27,11 +29,30 @@ var _ prometheus.Collector = &collector{}
 // New creates a new Prometheus collector which collects metrics using the
 // input Open vSwitch generic netlink client.
 func New(c *ovsnl.Client) prometheus.Collector {
+	collectors := []prometheus.Collector{
+		newDatapathCollector(c.Datapath.List),
+	}
+
+	// Try to add conntrack collector, but don't fail if it's not available
+	conntrackCollector := newConntrackCollector(func() ([]ovsnl.ConntrackEntry, error) {
+		svc, err := ovsnl.NewConntrackService()
+		if err != nil {
+			return nil, err
+		}
+		defer svc.Close()
+		return svc.List(context.Background())
+	})
+
+	// Test if conntrack service can be created
+	if _, err := ovsnl.NewConntrackService(); err != nil {
+		log.Printf("Warning: Conntrack service not available: %v. Conntrack metrics will be disabled.", err)
+	} else {
+		collectors = append(collectors, conntrackCollector)
+		log.Printf("Conntrack collector enabled")
+	}
+
 	return &collector{
-		cs: []prometheus.Collector{
-			// Additional generic netlink family collectors can be added here.
-			newDatapathCollector(c.Datapath.List),
-		},
+		cs: collectors,
 	}
 }
 
