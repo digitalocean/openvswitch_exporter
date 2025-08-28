@@ -22,14 +22,14 @@ require (
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
-	github.com/prometheus/common v0.17.0 // indirect
-	github.com/prometheus/procfs v0.6.0 // indirect
+	github.com/prometheus/common v0.15.0 // indirect
+	github.com/prometheus/procfs v0.2.0 // indirect
 	github.com/ti-mo/conntrack v0.5.2 // indirect
 	github.com/ti-mo/netfilter v0.5.3 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
-	google.golang.org/protobuf v1.25.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
+	google.golang.org/protobuf v1.23.0 // indirect
 )
-replace github.com/digitalocean/go-openvswitch => /Users/sgangopadhyay/dev/digitalocean/go-openvswitch
 
+replace github.com/digitalocean/go-openvswitch => ../go-openvswitch
