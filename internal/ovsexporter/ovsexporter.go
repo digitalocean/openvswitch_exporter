@@ -6,9 +6,10 @@
 package ovsexporter
 
 import (
-	"context"
 	"log"
 	"sync"
+
+	// "time"
 
 	"github.com/digitalocean/go-openvswitch/ovsnl"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,6 +26,7 @@ type collector struct {
 	conntrackEnabled bool
 }
 
+// Make sure collector implements prometheus.Collector
 var _ prometheus.Collector = &collector{}
 
 // New creates a new Prometheus collector which collects metrics using the
@@ -34,50 +36,35 @@ func New(c *ovsnl.Client) prometheus.Collector {
 		newDatapathCollector(c.Datapath.List),
 	}
 
-	// When you build the collector in New(...):
-	var snapshot func() map[uint16]map[uint32]int
-	if c.Agg != nil {
-		snapshot = c.Agg.Snapshot
-	}
-	base := newConntrackCollector(
-		// listZoneStats:
-		func(ctx context.Context, threshold int) (map[uint16]*ovsnl.ZoneStats, error) {
-			if c.Agg == nil {
-				return map[uint16]*ovsnl.ZoneStats{}, nil
-			}
-			zm := c.Agg.Snapshot()
-
-			out := make(map[uint16]*ovsnl.ZoneStats, len(zm))
-			for zone, marks := range zm {
-				total := 0
-				for _, cnt := range marks {
-					total += cnt
-				}
-				// Always include the zone (so "total" time series is complete).
-				zs := &ovsnl.ZoneStats{TotalCount: total}
-				// No per-entry slice to avoid memory.
-				// If you still want per-mark metrics, do it in Collect directly using zm.
-				out[zone] = zs
-				_ = threshold // threshold is not used here; you can still filter if desired.
-			}
-			return out, nil
-		},
-		// getStats: Disabled due to multicast connection issues
-		nil, // This will skip stats collection entirely
-	)
-	conntrackCollector := &ConntrackCollectorWithAggAccessor{
-		ConntrackCollector: base.(*ConntrackCollector),
-		SnapshotFunc:       snapshot,
+	// Start zone/mark aggregator
+	svc, err := ovsnl.NewConntrackService()
+	if err != nil {
+		log.Printf("Warning: Conntrack service not available: %v", err)
+		return &collector{cs: collectors}
 	}
 
-	if c.Conntrack == nil {
-		log.Printf("Warning: Conntrack service not available; metrics disabled.")
+	agg, err := ovsnl.NewZoneMarkAggregator(svc)
+	if err != nil {
+		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
+		return &collector{cs: collectors}
+	}
+	//TODO : To confirm if we absolutely need this, can omit if eventual consistency is ok
+
+	// if err := agg.PrimeSnapshot(context.Background(), 0); err != nil {
+	// 	log.Printf("Warning: Failed to prime snapshot: %v", err)
+	// }
+	if err := agg.Start(); err != nil {
+		log.Printf("Warning: Failed to start zone/mark aggregator: %v", err)
 	} else {
-		collectors = append(collectors, conntrackCollector)
-		log.Printf("Conntrack collector enabled (event-driven)")
+		log.Printf("Conntrack zone/mark aggregator started")
 	}
 
-	return &collector{cs: collectors, conntrackEnabled: true}
+	collectors = append(collectors, newConntrackCollector(agg))
+
+	return &collector{
+		cs:               collectors,
+		conntrackEnabled: true,
+	}
 }
 
 // Describe implements prometheus.Collector.
