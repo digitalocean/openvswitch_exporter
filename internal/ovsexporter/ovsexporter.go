@@ -24,6 +24,7 @@ type collector struct {
 	mu               sync.Mutex
 	cs               []prometheus.Collector
 	conntrackEnabled bool
+	agg              *ovsnl.ZoneMarkAggregator
 }
 
 // Make sure collector implements prometheus.Collector
@@ -36,34 +37,32 @@ func New(c *ovsnl.Client) prometheus.Collector {
 		newDatapathCollector(c.Datapath.List),
 	}
 
-	// Start zone/mark aggregator
-	svc, err := ovsnl.NewConntrackService()
-	if err != nil {
-		log.Printf("Warning: Conntrack service not available: %v", err)
+	// Create the aggregator using the client's ConntrackService
+	if c.Conntrack == nil {
+		log.Printf("Warning: Conntrack service not available in client")
 		return &collector{cs: collectors}
 	}
 
-	agg, err := ovsnl.NewZoneMarkAggregator(svc)
+	agg, err := ovsnl.NewZoneMarkAggregator(c.Conntrack)
 	if err != nil {
 		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
 	}
-	//TODO : To confirm if we absolutely need this, can omit if eventual consistency is ok
 
-	// if err := agg.PrimeSnapshot(context.Background(), 0); err != nil {
-	// 	log.Printf("Warning: Failed to prime snapshot: %v", err)
-	// }
+	// Start the aggregator
 	if err := agg.Start(); err != nil {
 		log.Printf("Warning: Failed to start zone/mark aggregator: %v", err)
-	} else {
-		log.Printf("Conntrack zone/mark aggregator started")
+		return &collector{cs: collectors}
 	}
+
+	log.Printf("Enhanced conntrack zone/mark aggregator started with adaptive sync")
 
 	collectors = append(collectors, newConntrackCollector(agg))
 
 	return &collector{
 		cs:               collectors,
 		conntrackEnabled: true,
+		agg:              agg,
 	}
 }
 
@@ -84,5 +83,17 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 
 	for _, cc := range c.cs {
 		cc.Collect(ch)
+	}
+}
+
+// Close cleans up resources
+func (c *collector) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.agg != nil {
+		log.Printf("Stopping conntrack aggregator...")
+		c.agg.Stop()
+		c.agg = nil
 	}
 }
