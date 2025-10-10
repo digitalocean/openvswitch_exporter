@@ -16,7 +16,6 @@ type conntrackCollector struct {
 // ConntrackCollectorWithAggAccessor wraps the existing collector with access to the aggregator snapshot
 type ConntrackCollectorWithAggAccessor struct {
 	*conntrackCollector
-	SnapshotFunc func() map[uint16]map[uint32]int
 }
 
 func newConntrackCollector(agg *ovsnl.ZoneMarkAggregator) prometheus.Collector {
@@ -48,15 +47,13 @@ func (c *conntrackCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	snapshot := c.agg.Snapshot()
-	for zone, marks := range snapshot {
-		for mark, count := range marks {
-			ch <- prometheus.MustNewConstMetric(
-				c.desc,
-				prometheus.GaugeValue,
-				float64(count),
-				fmt.Sprintf("%d", zone),
-				fmt.Sprintf("%d", mark),
-			)
-		}
+	for key, count := range snapshot {
+		ch <- prometheus.MustNewConstMetric(
+			c.desc,
+			prometheus.GaugeValue,
+			float64(count),
+			fmt.Sprintf("%d", key.Zone),
+			fmt.Sprintf("%d", key.Mark),
+		)
 	}
 }

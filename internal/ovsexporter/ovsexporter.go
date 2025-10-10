@@ -37,13 +37,8 @@ func New(c *ovsnl.Client) prometheus.Collector {
 		newDatapathCollector(c.Datapath.List),
 	}
 
-	// Create the aggregator using the client's ConntrackService
-	if c.Conntrack == nil {
-		log.Printf("Warning: Conntrack service not available in client")
-		return &collector{cs: collectors}
-	}
-
-	agg, err := ovsnl.NewZoneMarkAggregator(c.Conntrack)
+	// Create the aggregator
+	agg, err := ovsnl.NewZoneMarkAggregator()
 	if err != nil {
 		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
@@ -54,8 +49,6 @@ func New(c *ovsnl.Client) prometheus.Collector {
 		log.Printf("Warning: Failed to start zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
 	}
-
-	log.Printf("Enhanced conntrack zone/mark aggregator started with adaptive sync")
 
 	collectors = append(collectors, newConntrackCollector(agg))
 
