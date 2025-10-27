@@ -12,6 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+      with:
+        path: openvswitch_exporter
+    
+    - uses: actions/checkout@v2
+      with:
+        repository: digitalocean/go-openvswitch
+        path: go-openvswitch
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -22,18 +29,24 @@ jobs:
       run: |
         go get golang.org/x/lint/golint
         go get honnef.co/go/tools/cmd/staticcheck
+      working-directory: openvswitch_exporter
 
     - name: Build
       run: go build -v -tags=gofuzz ./...
+      working-directory: openvswitch_exporter
 
     - name: vet
       run: go vet ./...
+      working-directory: openvswitch_exporter
 
     - name: staticcheck
       run: staticcheck ./...
+      working-directory: openvswitch_exporter
 
     - name: lint
       run: golint -set_exit_status ./cmd/... ./internal/...
+      working-directory: openvswitch_exporter
 
     - name: Test
       run: go test -v -race ./...
+      working-directory: openvswitch_exporter

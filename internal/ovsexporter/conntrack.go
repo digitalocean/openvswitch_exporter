@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/digitalocean/go-openvswitch/ovsnl"
+	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type conntrackCollector struct {
 	desc *prometheus.Desc
-	agg  *ovsnl.ZoneMarkAggregator
+	agg  *conntrack.ZoneMarkAggregator
 }
 
 // ConntrackCollectorWithAggAccessor wraps the existing collector with access to the aggregator snapshot
@@ -18,7 +18,7 @@ type ConntrackCollectorWithAggAccessor struct {
 	*conntrackCollector
 }
 
-func newConntrackCollector(agg *ovsnl.ZoneMarkAggregator) prometheus.Collector {
+func newConntrackCollector(agg *conntrack.ZoneMarkAggregator) prometheus.Collector {
 	return &conntrackCollector{
 		desc: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "conntrack", "count"),

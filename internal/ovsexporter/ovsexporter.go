@@ -9,9 +9,8 @@ import (
 	"log"
 	"sync"
 
-	// "time"
-
 	"github.com/digitalocean/go-openvswitch/ovsnl"
+	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -24,7 +23,6 @@ type collector struct {
 	mu               sync.Mutex
 	cs               []prometheus.Collector
 	conntrackEnabled bool
-	agg              *ovsnl.ZoneMarkAggregator
 }
 
 // Make sure collector implements prometheus.Collector
@@ -34,11 +32,11 @@ var _ prometheus.Collector = &collector{}
 // input Open vSwitch generic netlink client.
 func New(c *ovsnl.Client) prometheus.Collector {
 	collectors := []prometheus.Collector{
-		newDatapathCollector(c.Datapath.List),
+		// newDatapathCollector(c.Datapath.List),
 	}
 
 	// Create the aggregator
-	agg, err := ovsnl.NewZoneMarkAggregator()
+	agg, err := conntrack.NewZoneMarkAggregator()
 	if err != nil {
 		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
@@ -55,7 +53,6 @@ func New(c *ovsnl.Client) prometheus.Collector {
 	return &collector{
 		cs:               collectors,
 		conntrackEnabled: true,
-		agg:              agg,
 	}
 }
 
@@ -83,10 +80,4 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 func (c *collector) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if c.agg != nil {
-		log.Printf("Stopping conntrack aggregator...")
-		c.agg.Stop()
-		c.agg = nil
-	}
 }
