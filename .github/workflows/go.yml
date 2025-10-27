@@ -25,10 +25,13 @@ jobs:
       with:
         go-version: 1.25
 
-    - name: Get tooling
+    - name: Install tooling
       run: |
-        go get golang.org/x/lint/golint
-        go get honnef.co/go/tools/cmd/staticcheck
+        # Install linting / analysis tools with explicit versions (go get no longer installs binaries)
+        go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
+        go install golang.org/x/lint/golint@latest
+        # Ensure GOPATH/bin is on PATH for subsequent steps (actions/setup-go usually does this, but we enforce it)
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       working-directory: openvswitch_exporter
 
     - name: Build
