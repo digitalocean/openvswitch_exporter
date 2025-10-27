@@ -27,10 +27,10 @@ jobs:
 
     - name: Install tooling
       run: |
-        # Install linting / analysis tools with explicit versions (go get no longer installs binaries)
-        go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
-        go install golang.org/x/lint/golint@latest
-        # Ensure GOPATH/bin is on PATH for subsequent steps (actions/setup-go usually does this, but we enforce it)
+        # Install analysis tools. staticcheck @latest for Go 1.24 compatibility.
+        go install honnef.co/go/tools/cmd/staticcheck@latest
+        # golint is deprecated; keep temporarily (will remove in follow-up)
+        go install golang.org/x/lint/golint@latest || echo "golint install failed (deprecated)"
         echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       working-directory: openvswitch_exporter
 
