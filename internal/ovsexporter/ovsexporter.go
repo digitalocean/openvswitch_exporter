@@ -32,7 +32,7 @@ var _ prometheus.Collector = &collector{}
 // input Open vSwitch generic netlink client.
 func New(c *ovsnl.Client) prometheus.Collector {
 	collectors := []prometheus.Collector{
-		// newDatapathCollector(c.Datapath.List),
+		newDatapathCollector(c.Datapath.List),
 	}
 
 	// Create the aggregator
