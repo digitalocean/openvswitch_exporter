@@ -28,5 +28,3 @@ require (
 	golang.org/x/sys v0.37.0 // indirect
 	google.golang.org/protobuf v1.23.0 // indirect
 )
-
-// replace github.com/digitalocean/go-openvswitch => ../go-openvswitch

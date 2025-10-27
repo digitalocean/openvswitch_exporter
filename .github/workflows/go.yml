@@ -12,13 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-      with:
-        path: openvswitch_exporter
-    
-    - uses: actions/checkout@v2
-      with:
-        repository: digitalocean/go-openvswitch
-        path: go-openvswitch
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -32,24 +25,18 @@ jobs:
         # golint is deprecated; keep temporarily (will remove in follow-up)
         go install golang.org/x/lint/golint@latest || echo "golint install failed (deprecated)"
         echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      working-directory: openvswitch_exporter
 
     - name: Build
       run: go build -v -tags=gofuzz ./...
-      working-directory: openvswitch_exporter
 
     - name: vet
       run: go vet ./...
-      working-directory: openvswitch_exporter
 
     - name: staticcheck
       run: staticcheck ./...
-      working-directory: openvswitch_exporter
 
     - name: lint
       run: golint -set_exit_status ./cmd/... ./internal/...
-      working-directory: openvswitch_exporter
 
     - name: Test
       run: go test -v -race ./...
-      working-directory: openvswitch_exporter
