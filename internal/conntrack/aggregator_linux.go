@@ -325,10 +325,9 @@ func (a *ZoneMarkAggregator) performHealthCheck() error {
 		if err := a.RestartListener(); err != nil {
 			log.Printf("Health check: RestartListener failed: %v", err)
 			return fmt.Errorf("failed to restart listener: %w", err)
-		} else {
-			a.missedEvents.Store(0)
-			log.Printf("Health check: Listener restarted successfully")
 		}
+		a.missedEvents.Store(0)
+		log.Printf("Health check: Listener restarted successfully")
 	}
 	a.lastHealthCheck = time.Now()
 	return nil
