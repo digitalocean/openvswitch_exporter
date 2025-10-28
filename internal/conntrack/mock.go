@@ -18,9 +18,15 @@ type MockZoneMarkAggregator struct {
 
 // NewZoneMarkAggregator creates a mock aggregator for testing
 func NewZoneMarkAggregator() (*MockZoneMarkAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(LoadConfig())
+}
+
+// NewZoneMarkAggregatorWithConfig creates a mock aggregator with custom configuration
+func NewZoneMarkAggregatorWithConfig(config *Config) (*MockZoneMarkAggregator, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &MockZoneMarkAggregator{
 		ZoneMarkAggregator: &ZoneMarkAggregator{
+			config: config,
 			ctx:    ctx,
 			cancel: cancel,
 		},
@@ -45,9 +51,11 @@ func (m *MockZoneMarkAggregator) Start() error {
 	return nil
 }
 
-// Stop stops the mock aggregator
-func (m *MockZoneMarkAggregator) Stop() {
+// Stop stops the mock aggregator with graceful shutdown
+func (m *MockZoneMarkAggregator) Stop() error {
 	m.cancel()
+	// Mock implementation doesn't need actual cleanup
+	return nil
 }
 
 // AddEntry adds a mock entry for testing

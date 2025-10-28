@@ -24,17 +24,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Tunables - adjust for your environment
-const (
-	eventChanSize      = 512 * 1024
-	eventWorkerCount   = 100
-	destroyFlushIntvl  = 50 * time.Millisecond // flush aggregated DESTROYs every 50ms for minimal lag
-	destroyDeltaCap    = 200000                // maximum distinct (zone,mark) entries in destroyDeltas
-	dropsWarnThreshold = 10000                 // threshold of missedEvents to log a stronger warning
-)
-
 // ZoneMarkAggregator keeps live counts (zmKey -> count) with bounded ingestion
 type ZoneMarkAggregator struct {
+	// Configuration
+	config *Config
+
 	// primary counts (zmKey -> count) - simplified flat mapping
 	counts    map[ZoneMarkKey]int
 	countsMu  sync.RWMutex
@@ -72,6 +66,6 @@ type ZoneMarkKey struct {
 // Aggregator interface defines the methods needed by the collector
 type Aggregator interface {
 	Snapshot() map[ZoneMarkKey]int
-	Stop()
+	Stop() error
 	Start() error
 }
