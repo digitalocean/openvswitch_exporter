@@ -27,7 +27,7 @@ import (
 // ZoneMarkAggregator keeps live counts (zmKey -> count) with bounded ingestion
 type ZoneMarkAggregator struct {
 	// Configuration
-	config *ConntrackConfig
+	config *Config
 
 	// primary counts (zmKey -> count) - simplified flat mapping
 	counts    map[ZoneMarkKey]int

@@ -20,8 +20,8 @@ import (
 	"time"
 )
 
-// ConntrackConfig holds configuration for the conntrack aggregator
-type ConntrackConfig struct {
+// Config holds configuration for the conntrack aggregator
+type Config struct {
 	EventChanSize      int
 	EventWorkerCount   int
 	DestroyFlushIntvl  time.Duration
@@ -33,9 +33,9 @@ type ConntrackConfig struct {
 	GracefulTimeout    time.Duration
 }
 
-// DefaultConntrackConfig returns default configuration values
-func DefaultConntrackConfig() *ConntrackConfig {
-	return &ConntrackConfig{
+// DefaultConfig returns default configuration values
+func DefaultConfig() *Config {
+	return &Config{
 		EventChanSize:      512 * 1024,
 		EventWorkerCount:   100,
 		DestroyFlushIntvl:  50 * time.Millisecond,
@@ -48,9 +48,9 @@ func DefaultConntrackConfig() *ConntrackConfig {
 	}
 }
 
-// LoadConntrackConfig loads conntrack configuration from environment variables
-func LoadConntrackConfig() *ConntrackConfig {
-	config := DefaultConntrackConfig()
+// LoadConfig loads conntrack configuration from environment variables
+func LoadConfig() *Config {
+	config := DefaultConfig()
 
 	// Load from environment variables
 	if size := os.Getenv("CONNTRACK_EVENT_CHAN_SIZE"); size != "" {

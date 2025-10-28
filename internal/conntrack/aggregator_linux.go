@@ -33,11 +33,11 @@ import (
 
 // NewZoneMarkAggregator creates a new aggregator with its own listening connection.
 func NewZoneMarkAggregator() (*ZoneMarkAggregator, error) {
-	return NewZoneMarkAggregatorWithConfig(LoadConntrackConfig())
+	return NewZoneMarkAggregatorWithConfig(LoadConfig())
 }
 
 // NewZoneMarkAggregatorWithConfig creates a new aggregator with custom configuration.
-func NewZoneMarkAggregatorWithConfig(config *ConntrackConfig) (*ZoneMarkAggregator, error) {
+func NewZoneMarkAggregatorWithConfig(config *Config) (*ZoneMarkAggregator, error) {
 	// Create a separate connection for listening to events
 	listenCli, err := conntrack.Dial(nil)
 	if err != nil {
