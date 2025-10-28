@@ -4,6 +4,7 @@
 package conntrack
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -13,15 +14,17 @@ type MockZoneMarkAggregator struct {
 	*ZoneMarkAggregator
 	counts   map[ZoneMarkKey]int
 	countsMu sync.RWMutex
-	stopCh   chan struct{}
 }
 
 // NewZoneMarkAggregator creates a mock aggregator for testing
 func NewZoneMarkAggregator() (*MockZoneMarkAggregator, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &MockZoneMarkAggregator{
-		ZoneMarkAggregator: &ZoneMarkAggregator{},
-		counts:             make(map[ZoneMarkKey]int),
-		stopCh:             make(chan struct{}),
+		ZoneMarkAggregator: &ZoneMarkAggregator{
+			ctx:    ctx,
+			cancel: cancel,
+		},
+		counts: make(map[ZoneMarkKey]int),
 	}, nil
 }
 
@@ -44,12 +47,7 @@ func (m *MockZoneMarkAggregator) Start() error {
 
 // Stop stops the mock aggregator
 func (m *MockZoneMarkAggregator) Stop() {
-	select {
-	case <-m.stopCh:
-		// Already stopped
-	default:
-		close(m.stopCh)
-	}
+	m.cancel()
 }
 
 // AddEntry adds a mock entry for testing

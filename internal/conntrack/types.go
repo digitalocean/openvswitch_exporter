@@ -15,6 +15,7 @@
 package conntrack
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,7 +45,8 @@ type ZoneMarkAggregator struct {
 	listenerMu sync.Mutex // Protects listener restart operations
 
 	// lifecycle
-	stopCh chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 	wg     errgroup.Group
 
 	// bounded event ingestion
