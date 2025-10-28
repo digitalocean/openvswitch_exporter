@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 // Copyright 2018-2021 DigitalOcean.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -5,6 +8,7 @@ package ovsexporter
 
 import (
 	"testing"
+	"time"
 
 	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
 )
@@ -36,5 +40,25 @@ func TestConntrackCollectorWithNilAggregator(t *testing.T) {
 	collector := newConntrackCollector(nil)
 
 	// This should not panic and should emit zero metrics
+	testCollector(t, collector)
+}
+
+func TestConntrackCollectorWithRealData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping conntrack test in short mode")
+	}
+
+	// Test with real conntrack data if available
+	agg, err := conntrack.NewZoneMarkAggregator()
+	if err != nil {
+		t.Skipf("Skipping real data test: %v", err)
+	}
+
+	t.Cleanup(agg.Stop)
+
+	// Wait a bit for some real data to accumulate
+	time.Sleep(100 * time.Millisecond)
+
+	collector := newConntrackCollector(agg)
 	testCollector(t, collector)
 }

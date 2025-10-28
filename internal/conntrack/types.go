@@ -66,3 +66,10 @@ type ZoneMarkKey struct {
 	Zone uint16
 	Mark uint32
 }
+
+// Aggregator interface defines the methods needed by the collector
+type Aggregator interface {
+	Snapshot() map[ZoneMarkKey]int
+	Stop()
+	Start() error
+}
