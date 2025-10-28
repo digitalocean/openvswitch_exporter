@@ -18,9 +18,15 @@ type MockZoneMarkAggregator struct {
 
 // NewZoneMarkAggregator creates a mock aggregator for testing
 func NewZoneMarkAggregator() (*MockZoneMarkAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(LoadConntrackConfig())
+}
+
+// NewZoneMarkAggregatorWithConfig creates a mock aggregator with custom configuration
+func NewZoneMarkAggregatorWithConfig(config *ConntrackConfig) (*MockZoneMarkAggregator, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &MockZoneMarkAggregator{
 		ZoneMarkAggregator: &ZoneMarkAggregator{
+			config: config,
 			ctx:    ctx,
 			cancel: cancel,
 		},

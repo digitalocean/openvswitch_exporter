@@ -33,27 +33,32 @@ import (
 
 // NewZoneMarkAggregator creates a new aggregator with its own listening connection.
 func NewZoneMarkAggregator() (*ZoneMarkAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(LoadConntrackConfig())
+}
 
+// NewZoneMarkAggregatorWithConfig creates a new aggregator with custom configuration.
+func NewZoneMarkAggregatorWithConfig(config *ConntrackConfig) (*ZoneMarkAggregator, error) {
 	// Create a separate connection for listening to events
 	listenCli, err := conntrack.Dial(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listening connection: %w", err)
 	}
 
-	if err := listenCli.SetReadBuffer(64 * 1024 * 1024); err != nil { // 64MB buffer for 1.4M events/sec
+	if err := listenCli.SetReadBuffer(config.ReadBufferSize); err != nil {
 		log.Printf("Warning: Failed to set read buffer size: %v", err)
 	}
-	if err := listenCli.SetWriteBuffer(64 * 1024 * 1024); err != nil { // 64MB buffer for 1.4M events/sec
+	if err := listenCli.SetWriteBuffer(config.WriteBufferSize); err != nil {
 		log.Printf("Warning: Failed to set write buffer size: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &ZoneMarkAggregator{
+		config:          config,
 		counts:          make(map[ZoneMarkKey]int),
 		listenCli:       listenCli,
 		ctx:             ctx,
 		cancel:          cancel,
-		eventsCh:        make(chan conntrack.Event, eventChanSize),
+		eventsCh:        make(chan conntrack.Event, config.EventChanSize),
 		destroyDeltas:   make(map[ZoneMarkKey]int),
 		lastEventTime:   time.Now(),
 		lastHealthCheck: time.Now(),
@@ -69,7 +74,7 @@ func (a *ZoneMarkAggregator) Start() error {
 		return err
 	}
 
-	for i := 0; i < eventWorkerCount; i++ {
+	for i := 0; i < a.config.EventWorkerCount; i++ {
 		a.wg.Go(func() error {
 			return a.eventWorker(a.ctx)
 		})
@@ -174,7 +179,7 @@ func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) error {
 	if ev.Type == conntrack.EventDestroy {
 		a.deltaMu.Lock()
 		defer a.deltaMu.Unlock()
-		if len(a.destroyDeltas) < destroyDeltaCap {
+		if len(a.destroyDeltas) < a.config.DestroyDeltaCap {
 			a.destroyDeltas[key]++
 			if len(a.destroyDeltas) > 50000 { // If we have >50K deltas, flush immediately
 				deltas := a.destroyDeltas
@@ -192,7 +197,7 @@ func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) error {
 			}
 		} else {
 			a.missedEvents.Add(1)
-			if a.missedEvents.Load()%dropsWarnThreshold == 0 {
+			if a.missedEvents.Load()%a.config.DropsWarnThreshold == 0 {
 				log.Printf("Warning: destroyDeltas saturated (size=%d). missedEvents=%d", len(a.destroyDeltas), a.missedEvents.Load())
 			}
 		}
@@ -222,7 +227,7 @@ func (a *ZoneMarkAggregator) applyDeltasImmediatelyUnsafe(deltas map[ZoneMarkKey
 // destroyFlusher periodically applies the aggregated DESTROY deltas into counts
 // Uses adaptive flushing: more frequent during high event rates for minimal lag
 func (a *ZoneMarkAggregator) destroyFlusher(ctx context.Context) error {
-	ticker := time.NewTicker(destroyFlushIntvl)
+	ticker := time.NewTicker(a.config.DestroyFlushIntvl)
 	defer ticker.Stop()
 
 	for {
@@ -250,7 +255,7 @@ func (a *ZoneMarkAggregator) destroyFlusher(ctx context.Context) error {
 			} else {
 				// Normal flush
 				a.flushDestroyDeltas()
-				ticker.Reset(destroyFlushIntvl) // Back to normal interval
+				ticker.Reset(a.config.DestroyFlushIntvl) // Back to normal interval
 			}
 		}
 	}
@@ -302,7 +307,7 @@ func (a *ZoneMarkAggregator) Snapshot() map[ZoneMarkKey]int {
 
 // startHealthMonitoring periodically logs aggregator health
 func (a *ZoneMarkAggregator) startHealthMonitoring(ctx context.Context) error {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(a.config.HealthCheckIntvl)
 	defer ticker.Stop()
 
 	for {
@@ -321,7 +326,7 @@ func (a *ZoneMarkAggregator) startHealthMonitoring(ctx context.Context) error {
 func (a *ZoneMarkAggregator) performHealthCheck() error {
 	missed := a.missedEvents.Load()
 
-	if missed > dropsWarnThreshold {
+	if missed > a.config.DropsWarnThreshold {
 		if err := a.RestartListener(); err != nil {
 			log.Printf("Health check: RestartListener failed: %v", err)
 			return fmt.Errorf("failed to restart listener: %w", err)
@@ -342,7 +347,7 @@ func (a *ZoneMarkAggregator) GetError() error {
 
 // Stop cancels listening and closes the connection with graceful shutdown.
 func (a *ZoneMarkAggregator) Stop() error {
-	return a.StopWithTimeout(30 * time.Second)
+	return a.StopWithTimeout(a.config.GracefulTimeout)
 }
 
 // StopWithTimeout cancels listening and closes the connection with a configurable timeout.
