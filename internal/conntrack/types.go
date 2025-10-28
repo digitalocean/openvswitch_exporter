@@ -27,9 +27,9 @@ import (
 const (
 	eventChanSize      = 512 * 1024
 	eventWorkerCount   = 100
-	destroyFlushIntvl  = 100 * time.Millisecond // flush aggregated DESTROYs every 100ms for minimal lag
-	destroyDeltaCap    = 200000                 // maximum distinct (zone,mark) entries in destroyDeltas
-	dropsWarnThreshold = 10000                  // threshold of missedEvents to log a stronger warning
+	destroyFlushIntvl  = 50 * time.Millisecond // flush aggregated DESTROYs every 50ms for minimal lag
+	destroyDeltaCap    = 200000                // maximum distinct (zone,mark) entries in destroyDeltas
+	dropsWarnThreshold = 10000                 // threshold of missedEvents to log a stronger warning
 )
 
 // ZoneMarkAggregator keeps live counts (zmKey -> count) with bounded ingestion

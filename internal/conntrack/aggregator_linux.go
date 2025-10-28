@@ -95,7 +95,7 @@ func (a *ZoneMarkAggregator) startEventListener() error {
 		netfilter.GroupCTUpdate,
 	}
 
-	errCh, err := a.listenCli.Listen(libEvents, 10, groups)
+	errCh, err := a.listenCli.Listen(libEvents, 50, groups)
 	if err != nil {
 		return fmt.Errorf("failed to listen to conntrack events: %w", err)
 	}
