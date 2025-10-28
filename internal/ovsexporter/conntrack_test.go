@@ -168,7 +168,7 @@ func TestConntrackCollector(t *testing.T) {
 			}
 
 			if agg != nil {
-				t.Cleanup(agg.Stop)
+				t.Cleanup(func() { agg.Stop() })
 			}
 
 			for i, op := range tt.operations {
@@ -241,7 +241,7 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 				t.Skipf("Skipping real data test: %v", err)
 			}
 
-			t.Cleanup(agg.Stop)
+			t.Cleanup(func() { agg.Stop() })
 
 			// Start the aggregator
 			if err := agg.Start(); err != nil {
@@ -345,7 +345,7 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 			}
 
 			if agg != nil {
-				t.Cleanup(agg.Stop)
+				t.Cleanup(func() { agg.Stop() })
 			}
 
 			for i, op := range tt.operations {

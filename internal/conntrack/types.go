@@ -72,6 +72,6 @@ type ZoneMarkKey struct {
 // Aggregator interface defines the methods needed by the collector
 type Aggregator interface {
 	Snapshot() map[ZoneMarkKey]int
-	Stop()
+	Stop() error
 	Start() error
 }

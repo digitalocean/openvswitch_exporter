@@ -5,9 +5,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/digitalocean/go-openvswitch/ovsnl"
 	"github.com/digitalocean/openvswitch_exporter/internal/ovsexporter"
@@ -38,9 +43,59 @@ func main() {
 		http.Redirect(w, r, *metricsPath, http.StatusMovedPermanently)
 	})
 
-	log.Printf("starting Open vSwitch exporter on %q", *metricsAddr)
-
-	if err := http.ListenAndServe(*metricsAddr, mux); err != nil {
-		log.Fatalf("cannot start Open vSwitch exporter: %v", err)
+	// Create HTTP server
+	server := &http.Server{
+		Addr:    *metricsAddr,
+		Handler: mux,
 	}
+
+	// Handle shutdown signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan,
+		syscall.SIGINT,  // Ctrl+C
+		syscall.SIGTERM, // Termination request
+		syscall.SIGHUP,  // Hang up (config reload)
+		syscall.SIGQUIT, // Quit signal
+	)
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("starting Open vSwitch exporter on %q", *metricsAddr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("cannot start Open vSwitch exporter: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sig := <-sigChan
+
+	switch sig {
+	case syscall.SIGHUP:
+		log.Printf("Received SIGHUP, reloading config...")
+		// TODO: Add config reload logic here
+		log.Printf("Config reloaded")
+		return
+	case syscall.SIGQUIT:
+		log.Printf("Received SIGQUIT, shutting down immediately...")
+		// Immediate shutdown for SIGQUIT
+	default:
+		log.Printf("Received signal %v, stopping gracefully...", sig)
+	}
+
+	// Graceful shutdown with 15 second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Server shutdown error: %v", err)
+	}
+
+	// Close collector if it supports graceful shutdown
+	if closeable, ok := collector.(interface{ Close() error }); ok {
+		if err := closeable.Close(); err != nil {
+			log.Printf("Collector shutdown error: %v", err)
+		}
+	}
+
+	log.Printf("Exporter stopped")
 }

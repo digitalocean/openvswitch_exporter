@@ -90,12 +90,14 @@ func TestZoneMarkAggregator(t *testing.T) {
 				func(agg *ZoneMarkAggregator) error {
 					// Let it run briefly
 					time.Sleep(10 * time.Millisecond)
-					return nil
+					return agg.Stop()
 				},
 			},
 			validate: func(t *testing.T, agg *ZoneMarkAggregator) {
 				// Test that aggregator can be stopped gracefully
-				agg.Stop()
+				if err := agg.Stop(); err != nil {
+					t.Errorf("Stop() returned error: %v", err)
+				}
 				// Snapshot should still work after stop
 				snapshot := agg.Snapshot()
 				if snapshot == nil {
@@ -155,7 +157,7 @@ func TestZoneMarkAggregator(t *testing.T) {
 				t.Fatal("NewZoneMarkAggregator() returned nil aggregator")
 			}
 
-			t.Cleanup(agg.Stop)
+			t.Cleanup(func() { agg.Stop() })
 
 			for i, op := range tt.operations {
 				if err := op(agg); err != nil {
@@ -322,8 +324,7 @@ func TestAggregatorLifecycle(t *testing.T) {
 			name: "stop_without_start",
 			operations: []func(*ZoneMarkAggregator) error{
 				func(agg *ZoneMarkAggregator) error {
-					agg.Stop() // Stop without starting
-					return nil
+					return agg.Stop() // Stop without starting
 				},
 			},
 			validate: func(t *testing.T, agg *ZoneMarkAggregator) {
@@ -341,8 +342,7 @@ func TestAggregatorLifecycle(t *testing.T) {
 				func(agg *ZoneMarkAggregator) error { return agg.Start() },
 				func(agg *ZoneMarkAggregator) error {
 					time.Sleep(10 * time.Millisecond)
-					agg.Stop()
-					return nil
+					return agg.Stop()
 				},
 			},
 			validate: func(t *testing.T, agg *ZoneMarkAggregator) {
@@ -371,7 +371,7 @@ func TestAggregatorLifecycle(t *testing.T) {
 				t.Fatal("NewZoneMarkAggregator() returned nil aggregator")
 			}
 
-			t.Cleanup(agg.Stop)
+			t.Cleanup(func() { agg.Stop() })
 
 			for i, op := range tt.operations {
 				if err := op(agg); err != nil {

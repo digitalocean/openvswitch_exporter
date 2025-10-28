@@ -45,9 +45,11 @@ func (m *MockZoneMarkAggregator) Start() error {
 	return nil
 }
 
-// Stop stops the mock aggregator
-func (m *MockZoneMarkAggregator) Stop() {
+// Stop stops the mock aggregator with graceful shutdown
+func (m *MockZoneMarkAggregator) Stop() error {
 	m.cancel()
+	// Mock implementation doesn't need actual cleanup
+	return nil
 }
 
 // AddEntry adds a mock entry for testing

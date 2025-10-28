@@ -181,7 +181,7 @@ func TestConntrackCollector(t *testing.T) {
 			}
 
 			if agg != nil {
-				t.Cleanup(agg.Stop)
+				t.Cleanup(func() { agg.Stop() })
 			}
 
 			for i, op := range tt.operations {
@@ -314,7 +314,7 @@ func TestMockAggregatorOperations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create mock aggregator: %v", err)
 			}
-			t.Cleanup(agg.Stop)
+			t.Cleanup(func() { agg.Stop() })
 
 			for _, op := range tt.operations {
 				op(agg)
@@ -400,7 +400,7 @@ func TestConntrackCollectorIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create mock aggregator: %v", err)
 			}
-			t.Cleanup(agg.Stop)
+			t.Cleanup(func() { agg.Stop() })
 
 			for _, op := range tt.operations {
 				op(agg)

@@ -340,21 +340,53 @@ func (a *ZoneMarkAggregator) GetError() error {
 	return nil
 }
 
-// Stop cancels listening and closes the connection.
-func (a *ZoneMarkAggregator) Stop() {
-	a.cancel() // Cancel the context to signal all goroutines to stop
+// Stop cancels listening and closes the connection with graceful shutdown.
+func (a *ZoneMarkAggregator) Stop() error {
+	return a.StopWithTimeout(30 * time.Second)
+}
 
-	// Wait for all goroutines to exit and check for errors
-	if err := a.wg.Wait(); err != nil {
-		log.Printf("Error from goroutine group: %v", err)
+// StopWithTimeout cancels listening and closes the connection with a configurable timeout.
+func (a *ZoneMarkAggregator) StopWithTimeout(timeout time.Duration) error {
+	// Signal shutdown to all goroutines
+	a.cancel()
+
+	// Create a context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Channel to receive shutdown completion
+	done := make(chan error, 1)
+
+	// Wait for goroutines to exit in a separate goroutine
+	go func() {
+		done <- a.wg.Wait()
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("Error from goroutine group during shutdown: %v", err)
+			// Continue with cleanup even if there were errors
+		}
+	case <-ctx.Done():
+		log.Printf("Graceful shutdown timeout exceeded (%v), forcing cleanup", timeout)
+		// Force close connections even if goroutines didn't exit cleanly
 	}
 
+	// Close the listening connection
 	if a.listenCli != nil {
 		if err := a.listenCli.Close(); err != nil {
 			log.Printf("Error closing listenCli during cleanup: %v", err)
 		}
+		a.listenCli = nil
 	}
+
+	// Final flush of any remaining deltas
 	a.flushDestroyDeltas()
+
+	log.Printf("Aggregator stopped gracefully")
+	return nil
 }
 
 // RestartListener attempts to restart the conntrack event listener

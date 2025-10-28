@@ -23,6 +23,7 @@ type collector struct {
 	mu               sync.Mutex
 	cs               []prometheus.Collector
 	conntrackEnabled bool
+	aggregator       conntrack.Aggregator
 }
 
 // Make sure collector implements prometheus.Collector
@@ -53,6 +54,7 @@ func New(c *ovsnl.Client) prometheus.Collector {
 	return &collector{
 		cs:               collectors,
 		conntrackEnabled: true,
+		aggregator:       agg,
 	}
 }
 
@@ -76,8 +78,18 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// Close cleans up resources
-func (c *collector) Close() {
+// Close cleans up resources with graceful shutdown
+func (c *collector) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.conntrackEnabled && c.aggregator != nil {
+		if err := c.aggregator.Stop(); err != nil {
+			log.Printf("Error stopping aggregator: %v", err)
+			return err
+		}
+		log.Printf("Collector closed gracefully")
+	}
+
+	return nil
 }
