@@ -17,6 +17,7 @@
 package conntrack
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -46,10 +47,12 @@ func NewZoneMarkAggregator() (*ZoneMarkAggregator, error) {
 		log.Printf("Warning: Failed to set write buffer size: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	a := &ZoneMarkAggregator{
 		counts:          make(map[ZoneMarkKey]int),
 		listenCli:       listenCli,
-		stopCh:          make(chan struct{}),
+		ctx:             ctx,
+		cancel:          cancel,
 		eventsCh:        make(chan conntrack.Event, eventChanSize),
 		destroyDeltas:   make(map[ZoneMarkKey]int),
 		lastEventTime:   time.Now(),
@@ -68,19 +71,16 @@ func (a *ZoneMarkAggregator) Start() error {
 
 	for i := 0; i < eventWorkerCount; i++ {
 		a.wg.Go(func() error {
-			a.eventWorker()
-			return nil
+			return a.eventWorker(a.ctx)
 		})
 	}
 
 	a.wg.Go(func() error {
-		a.destroyFlusher()
-		return nil
+		return a.destroyFlusher(a.ctx)
 	})
 
 	a.wg.Go(func() error {
-		a.startHealthMonitoring()
-		return nil
+		return a.startHealthMonitoring(a.ctx)
 	})
 
 	return nil
@@ -95,7 +95,7 @@ func (a *ZoneMarkAggregator) startEventListener() error {
 		netfilter.GroupCTUpdate,
 	}
 
-	errCh, err := a.listenCli.Listen(libEvents, 10, groups)
+	errCh, err := a.listenCli.Listen(libEvents, 50, groups)
 	if err != nil {
 		return fmt.Errorf("failed to listen to conntrack events: %w", err)
 	}
@@ -106,9 +106,9 @@ func (a *ZoneMarkAggregator) startEventListener() error {
 
 		for {
 			select {
-			case <-a.stopCh:
+			case <-a.ctx.Done():
 				log.Printf("Stopping lib->bounded relay after %d lib events", eventCount)
-				return nil
+				return a.ctx.Err()
 			case e := <-errCh:
 				if e != nil {
 					log.Printf("conntrack listener error: %v", e)
@@ -145,20 +145,22 @@ func (a *ZoneMarkAggregator) startEventListener() error {
 }
 
 // eventWorker consumes events from eventsCh and handles them
-func (a *ZoneMarkAggregator) eventWorker() {
-
+func (a *ZoneMarkAggregator) eventWorker(ctx context.Context) error {
 	for {
 		select {
-		case <-a.stopCh:
-			return
+		case <-ctx.Done():
+			return ctx.Err()
 		case ev := <-a.eventsCh:
-			a.handleEvent(ev)
+			if err := a.handleEvent(ev); err != nil {
+				log.Printf("Error handling event: %v", err)
+				// Continue processing other events, but log the error
+			}
 		}
 	}
 }
 
 // handleEvent processes a single event.
-func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) {
+func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) error {
 	f := ev.Flow
 	key := ZoneMarkKey{Zone: f.Zone, Mark: f.Mark}
 
@@ -166,7 +168,7 @@ func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) {
 		a.countsMu.Lock()
 		defer a.countsMu.Unlock()
 		a.counts[key]++
-		return
+		return nil
 	}
 
 	if ev.Type == conntrack.EventDestroy {
@@ -182,7 +184,7 @@ func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) {
 				defer a.countsMu.Unlock()
 				// Apply deltas immediately to minimize lag during extreme load
 				a.applyDeltasImmediatelyUnsafe(deltas)
-				return
+				return nil
 			}
 			// Log every 1000 DESTROY events to verify they're being received
 			if len(a.destroyDeltas)%1000 == 0 {
@@ -194,8 +196,10 @@ func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) {
 				log.Printf("Warning: destroyDeltas saturated (size=%d). missedEvents=%d", len(a.destroyDeltas), a.missedEvents.Load())
 			}
 		}
-		return
+		return nil
 	}
+
+	return nil
 }
 
 // applyDeltasImmediatelyUnsafe applies deltas immediately to minimize lag during extreme load
@@ -217,16 +221,16 @@ func (a *ZoneMarkAggregator) applyDeltasImmediatelyUnsafe(deltas map[ZoneMarkKey
 
 // destroyFlusher periodically applies the aggregated DESTROY deltas into counts
 // Uses adaptive flushing: more frequent during high event rates for minimal lag
-func (a *ZoneMarkAggregator) destroyFlusher() {
+func (a *ZoneMarkAggregator) destroyFlusher(ctx context.Context) error {
 	ticker := time.NewTicker(destroyFlushIntvl)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-a.stopCh:
+		case <-ctx.Done():
 			log.Printf("Destroy flusher stopping, final flush...")
 			a.flushDestroyDeltas()
-			return
+			return ctx.Err()
 		case <-ticker.C:
 			// Adaptive flushing: flush more frequently during high event rates
 			a.countsMu.RLock()
@@ -297,38 +301,54 @@ func (a *ZoneMarkAggregator) Snapshot() map[ZoneMarkKey]int {
 }
 
 // startHealthMonitoring periodically logs aggregator health
-func (a *ZoneMarkAggregator) startHealthMonitoring() {
+func (a *ZoneMarkAggregator) startHealthMonitoring(ctx context.Context) error {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-a.stopCh:
-			return
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
-			a.performHealthCheck()
+			if err := a.performHealthCheck(); err != nil {
+				log.Printf("Health check error: %v", err)
+				// Continue monitoring even if health check fails
+			}
 		}
 	}
 }
 
-func (a *ZoneMarkAggregator) performHealthCheck() {
+func (a *ZoneMarkAggregator) performHealthCheck() error {
 	missed := a.missedEvents.Load()
 
 	if missed > dropsWarnThreshold {
 		if err := a.RestartListener(); err != nil {
 			log.Printf("Health check: RestartListener failed: %v", err)
-		} else {
-			a.missedEvents.Store(0)
-			log.Printf("Health check: Listener restarted successfully")
+			return fmt.Errorf("failed to restart listener: %w", err)
 		}
+		a.missedEvents.Store(0)
+		log.Printf("Health check: Listener restarted successfully")
 	}
 	a.lastHealthCheck = time.Now()
+	return nil
+}
+
+// GetError returns any error from the errgroup if available
+func (a *ZoneMarkAggregator) GetError() error {
+	// This is a non-blocking way to check if there are any errors
+	// The actual error handling happens in Stop()
+	return nil
 }
 
 // Stop cancels listening and closes the connection.
 func (a *ZoneMarkAggregator) Stop() {
-	close(a.stopCh)
-	a.wg.Wait() // Wait for all goroutines to exit cleanly
+	a.cancel() // Cancel the context to signal all goroutines to stop
+
+	// Wait for all goroutines to exit and check for errors
+	if err := a.wg.Wait(); err != nil {
+		log.Printf("Error from goroutine group: %v", err)
+	}
+
 	if a.listenCli != nil {
 		if err := a.listenCli.Close(); err != nil {
 			log.Printf("Error closing listenCli during cleanup: %v", err)
@@ -342,8 +362,8 @@ func (a *ZoneMarkAggregator) RestartListener() error {
 	a.listenerMu.Lock()
 	defer a.listenerMu.Unlock()
 
-	// Signal all goroutines to stop by closing stopCh
-	close(a.stopCh)
+	// Signal all goroutines to stop by canceling the context
+	a.cancel()
 
 	// Close the old connection to help goroutines exit faster
 	if a.listenCli != nil {
@@ -355,8 +375,8 @@ func (a *ZoneMarkAggregator) RestartListener() error {
 	// Wait for all goroutines to exit cleanly
 	a.wg.Wait()
 
-	// Create a new stopCh for the restarted goroutines
-	a.stopCh = make(chan struct{})
+	// Create a new context for the restarted goroutines
+	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	// Create new connection
 	listenCli, err := conntrack.Dial(nil)

@@ -15,6 +15,7 @@
 package conntrack
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,9 +28,9 @@ import (
 const (
 	eventChanSize      = 512 * 1024
 	eventWorkerCount   = 100
-	destroyFlushIntvl  = 100 * time.Millisecond // flush aggregated DESTROYs every 100ms for minimal lag
-	destroyDeltaCap    = 200000                 // maximum distinct (zone,mark) entries in destroyDeltas
-	dropsWarnThreshold = 10000                  // threshold of missedEvents to log a stronger warning
+	destroyFlushIntvl  = 50 * time.Millisecond // flush aggregated DESTROYs every 50ms for minimal lag
+	destroyDeltaCap    = 200000                // maximum distinct (zone,mark) entries in destroyDeltas
+	dropsWarnThreshold = 10000                 // threshold of missedEvents to log a stronger warning
 )
 
 // ZoneMarkAggregator keeps live counts (zmKey -> count) with bounded ingestion
@@ -44,7 +45,8 @@ type ZoneMarkAggregator struct {
 	listenerMu sync.Mutex // Protects listener restart operations
 
 	// lifecycle
-	stopCh chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 	wg     errgroup.Group
 
 	// bounded event ingestion
@@ -65,4 +67,11 @@ type ZoneMarkAggregator struct {
 type ZoneMarkKey struct {
 	Zone uint16
 	Mark uint32
+}
+
+// Aggregator interface defines the methods needed by the collector
+type Aggregator interface {
+	Snapshot() map[ZoneMarkKey]int
+	Stop()
+	Start() error
 }
