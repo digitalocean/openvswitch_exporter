@@ -20,10 +20,9 @@ const (
 
 // A collector aggregates Open vSwitch Prometheus collectors.
 type collector struct {
-	mu               sync.Mutex
-	cs               []prometheus.Collector
-	conntrackEnabled bool
-	conntrack.Aggregator       conntrack.Aggregator
+	mu                  sync.Mutex
+	cs                  []prometheus.Collector
+	conntrackAggregator conntrack.MarkZoneAggregator
 }
 
 // Make sure collector implements prometheus.Collector
@@ -42,20 +41,12 @@ func New(c *ovsnl.Client) prometheus.Collector {
 		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
 	}
-
-	// Start the aggregator
 	if err := agg.Start(); err != nil {
 		log.Printf("Warning: Failed to start zone/mark aggregator: %v", err)
 		return &collector{cs: collectors}
 	}
-
 	collectors = append(collectors, newConntrackCollector(agg))
-
-	return &collector{
-		cs:               collectors,
-		conntrackEnabled: true,
-		aggregator:       agg,
-	}
+	return &collector{cs: collectors, conntrackAggregator: agg}
 }
 
 // Describe implements prometheus.Collector.
@@ -83,8 +74,8 @@ func (c *collector) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.conntrackEnabled && c.aggregator != nil {
-		if err := c.aggregator.Stop(); err != nil {
+	if c.conntrackAggregator != nil {
+		if err := c.conntrackAggregator.Stop(); err != nil {
 			log.Printf("Error stopping aggregator: %v", err)
 			return err
 		}

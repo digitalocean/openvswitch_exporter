@@ -7,6 +7,7 @@
 package ovsexporter
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -16,8 +17,8 @@ import (
 func TestConntrackCollector(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (conntrack.Aggregator, error)
-		operations  []func(conntrack.Aggregator) error
+		setup       func() (conntrack.MarkZoneAggregator, error)
+		operations  []func(conntrack.MarkZoneAggregator) error
 		validate    func(*testing.T, *conntrackCollector)
 		wantErr     bool
 		skipOnError bool
@@ -25,11 +26,11 @@ func TestConntrackCollector(t *testing.T) {
 	}{
 		{
 			name: "real_aggregator_creation",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return conntrack.NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error { return agg.Start() },
+			operations: []func(conntrack.MarkZoneAggregator) error{
+				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
 			},
 			validate: func(t *testing.T, collector *conntrackCollector) {
 				if collector == nil {
@@ -48,10 +49,10 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "nil_aggregator_handling",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return nil, nil
 			},
-			operations: []func(conntrack.Aggregator) error{},
+			operations: []func(conntrack.MarkZoneAggregator) error{},
 			validate: func(t *testing.T, collector *conntrackCollector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
@@ -68,12 +69,12 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "real_data_processing",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return conntrack.NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error { return agg.Start() },
-				func(agg conntrack.Aggregator) error {
+			operations: []func(conntrack.MarkZoneAggregator) error{
+				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
+				func(agg conntrack.MarkZoneAggregator) error {
 					// Let it run briefly to potentially collect real data
 					time.Sleep(50 * time.Millisecond)
 					return nil
@@ -92,30 +93,22 @@ func TestConntrackCollector(t *testing.T) {
 			description: "Test collector with real data processing",
 		},
 		{
-			name: "concurrent_collection",
-			setup: func() (conntrack.Aggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
-			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error { return agg.Start() },
-			},
+			name:       "concurrent_collection",
+			setup:      func() (conntrack.MarkZoneAggregator, error) { return conntrack.NewZoneMarkAggregator() },
+			operations: []func(conntrack.MarkZoneAggregator) error{func(agg conntrack.MarkZoneAggregator) error { return agg.Start() }},
 			validate: func(t *testing.T, collector *conntrackCollector) {
-				// Test concurrent collection
-				done := make(chan bool, 10)
+				var wg sync.WaitGroup
+				wg.Add(10)
 				for i := 0; i < 10; i++ {
 					go func() {
+						defer wg.Done()
 						snapshot := collector.agg.Snapshot()
 						if snapshot == nil {
 							t.Error("Concurrent snapshot returned nil")
 						}
-						done <- true
 					}()
 				}
-
-				// Wait for all goroutines
-				for i := 0; i < 10; i++ {
-					<-done
-				}
+				wg.Wait()
 			},
 			wantErr:     false,
 			skipOnError: true,
@@ -123,17 +116,17 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "lifecycle_management",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return conntrack.NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error { return agg.Start() },
-				func(agg conntrack.Aggregator) error {
+			operations: []func(conntrack.MarkZoneAggregator) error{
+				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
+				func(agg conntrack.MarkZoneAggregator) error {
 					// Let it run briefly
 					time.Sleep(10 * time.Millisecond)
 					return nil
 				},
-				func(agg conntrack.Aggregator) error {
+				func(agg conntrack.MarkZoneAggregator) error {
 					// Stop the aggregator
 					agg.Stop()
 					return nil
@@ -265,8 +258,8 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 func TestConntrackCollectorEdgeCases(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (conntrack.Aggregator, error)
-		operations  []func(conntrack.Aggregator) error
+		setup       func() (conntrack.MarkZoneAggregator, error)
+		operations  []func(conntrack.MarkZoneAggregator) error
 		validate    func(*testing.T, *conntrackCollector)
 		wantErr     bool
 		skipOnError bool
@@ -274,17 +267,17 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 	}{
 		{
 			name: "start_stop_multiple_times",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return conntrack.NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error { return agg.Start() },
-				func(agg conntrack.Aggregator) error {
+			operations: []func(conntrack.MarkZoneAggregator) error{
+				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
+				func(agg conntrack.MarkZoneAggregator) error {
 					time.Sleep(10 * time.Millisecond)
 					agg.Stop()
 					return nil
 				},
-				func(agg conntrack.Aggregator) error {
+				func(agg conntrack.MarkZoneAggregator) error {
 					// Try to start again after stop
 					return agg.Start()
 				},
@@ -302,11 +295,11 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 		},
 		{
 			name: "rapid_start_stop_cycles",
-			setup: func() (conntrack.Aggregator, error) {
+			setup: func() (conntrack.MarkZoneAggregator, error) {
 				return conntrack.NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.Aggregator) error{
-				func(agg conntrack.Aggregator) error {
+			operations: []func(conntrack.MarkZoneAggregator) error{
+				func(agg conntrack.MarkZoneAggregator) error {
 					// Rapid start/stop cycles
 					for i := 0; i < 5; i++ {
 						if err := agg.Start(); err != nil {

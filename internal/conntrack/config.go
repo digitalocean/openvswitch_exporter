@@ -15,8 +15,6 @@
 package conntrack
 
 import (
-	"os"
-	"strconv"
 	"time"
 )
 
@@ -49,63 +47,3 @@ func DefaultConfig() *Config {
 }
 
 // LoadConfig loads conntrack configuration from environment variables
-func LoadConfig() *Config {
-	config := DefaultConfig()
-
-	// Load from environment variables
-	if size := os.Getenv("CONNTRACK_EVENT_CHAN_SIZE"); size != "" {
-		if s, err := strconv.Atoi(size); err == nil && s > 0 {
-			config.EventChanSize = s
-		}
-	}
-
-	if count := os.Getenv("CONNTRACK_EVENT_WORKER_COUNT"); count != "" {
-		if c, err := strconv.Atoi(count); err == nil && c > 0 {
-			config.EventWorkerCount = c
-		}
-	}
-
-	if interval := os.Getenv("CONNTRACK_DESTROY_FLUSH_INTERVAL"); interval != "" {
-		if d, err := time.ParseDuration(interval); err == nil && d > 0 {
-			config.DestroyFlushIntvl = d
-		}
-	}
-
-	if cap := os.Getenv("CONNTRACK_DESTROY_DELTA_CAP"); cap != "" {
-		if c, err := strconv.Atoi(cap); err == nil && c > 0 {
-			config.DestroyDeltaCap = c
-		}
-	}
-
-	if threshold := os.Getenv("CONNTRACK_DROPS_WARN_THRESHOLD"); threshold != "" {
-		if t, err := strconv.ParseInt(threshold, 10, 64); err == nil && t >= 0 {
-			config.DropsWarnThreshold = t
-		}
-	}
-
-	if size := os.Getenv("CONNTRACK_READ_BUFFER_SIZE"); size != "" {
-		if s, err := strconv.Atoi(size); err == nil && s > 0 {
-			config.ReadBufferSize = s
-		}
-	}
-
-	if size := os.Getenv("CONNTRACK_WRITE_BUFFER_SIZE"); size != "" {
-		if s, err := strconv.Atoi(size); err == nil && s > 0 {
-			config.WriteBufferSize = s
-		}
-	}
-
-	if interval := os.Getenv("CONNTRACK_HEALTH_CHECK_INTERVAL"); interval != "" {
-		if d, err := time.ParseDuration(interval); err == nil && d > 0 {
-			config.HealthCheckIntvl = d
-		}
-	}
-
-	if timeout := os.Getenv("CONNTRACK_GRACEFUL_TIMEOUT"); timeout != "" {
-		if d, err := time.ParseDuration(timeout); err == nil && d > 0 {
-			config.GracefulTimeout = d
-		}
-	}
-
-	return config
-}

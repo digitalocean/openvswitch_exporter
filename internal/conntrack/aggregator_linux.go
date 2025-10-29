@@ -26,14 +26,17 @@ import (
 	"github.com/ti-mo/netfilter"
 )
 
+// Compile-time assertion that *ZoneMarkAggregator implements MarkZoneAggregator
+var _ MarkZoneAggregator = (*ZoneMarkAggregator)(nil)
+
 //
 // Conntrack aggregator with bounded ingestion + DESTROY aggregation
 // to handle massive bursts of conntrack DESTROY events without OOMing.
 //
 
 // NewZoneMarkAggregator creates a new aggregator with its own listening connection.
-func NewZoneMarkAggregator() (*ZoneMarkAggregator, error) {
-	return NewZoneMarkAggregatorWithConfig(LoadConfig())
+func NewZoneMarkAggregator() (MarkZoneAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(DefaultConfig())
 }
 
 // NewZoneMarkAggregatorWithConfig creates a new aggregator with custom configuration.
@@ -390,7 +393,7 @@ func (a *ZoneMarkAggregator) StopWithTimeout(timeout time.Duration) error {
 	// Final flush of any remaining deltas
 	a.flushDestroyDeltas()
 
-	log.Printf("Aggregator stopped gracefully")
+	log.Printf("MarkZoneAggregator stopped gracefully")
 	return nil
 }
 

@@ -10,7 +10,7 @@ import (
 
 type conntrackCollector struct {
 	desc *prometheus.Desc
-	agg  conntrack.Aggregator
+	agg  conntrack.MarkZoneAggregator
 }
 
 // ConntrackCollectorWithAggAccessor wraps the existing collector with access to the aggregator snapshot
@@ -18,7 +18,7 @@ type ConntrackCollectorWithAggAccessor struct {
 	*conntrackCollector
 }
 
-func newConntrackCollector(agg conntrack.Aggregator) prometheus.Collector {
+func newConntrackCollector(agg conntrack.MarkZoneAggregator) prometheus.Collector {
 	return &conntrackCollector{
 		desc: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "conntrack", "entries"),

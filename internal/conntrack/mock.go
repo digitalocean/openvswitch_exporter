@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// Compile-time assertion that *MockZoneMarkAggregator implements MarkZoneAggregator
+var _ MarkZoneAggregator = (*MockZoneMarkAggregator)(nil)
+
 // MockZoneMarkAggregator provides a mock implementation for non-Linux platforms
 type MockZoneMarkAggregator struct {
 	*ZoneMarkAggregator
@@ -16,9 +19,16 @@ type MockZoneMarkAggregator struct {
 	countsMu sync.RWMutex
 }
 
-// NewZoneMarkAggregator creates a mock aggregator for testing
-func NewZoneMarkAggregator() (*MockZoneMarkAggregator, error) {
-	return NewZoneMarkAggregatorWithConfig(LoadConfig())
+// NewMockZoneMarkAggregator creates a mock aggregator for testing
+func NewMockZoneMarkAggregator() (*MockZoneMarkAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(DefaultConfig())
+}
+
+// NewZoneMarkAggregator provides a linux-compatible constructor name on non-Linux
+// platforms. This allows calling code to use conntrack.NewZoneMarkAggregator()
+// uniformly across OSes while receiving a mock implementation on non-Linux.
+func NewZoneMarkAggregator() (MarkZoneAggregator, error) { //nolint:golint // cross-platform parity, returns interface
+	return NewZoneMarkAggregatorWithConfig(DefaultConfig())
 }
 
 // NewZoneMarkAggregatorWithConfig creates a mock aggregator with custom configuration
