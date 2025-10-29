@@ -4,35 +4,83 @@
 // Copyright 2018-2021 DigitalOcean.
 // SPDX-License-Identifier: Apache-2.0
 
-package ovsexporter
+package conntrack
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/prometheus/util/promlint"
 )
 
-func TestConntrackCollector(t *testing.T) {
+func testCollector(t *testing.T, collector prometheus.Collector) []byte {
+	t.Helper()
+
+	// Set up and gather metrics from a single pass.
+	reg := prometheus.NewPedanticRegistry()
+	if err := reg.Register(collector); err != nil {
+		t.Fatalf("failed to register Prometheus collector: %v", err)
+	}
+
+	srv := httptest.NewServer(promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to GET data from prometheus: %v", err)
+	}
+	defer resp.Body.Close()
+
+	buf, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read server response: %v", err)
+	}
+
+	// Check for lint cleanliness of metrics.
+	problems, err := promlint.New(bytes.NewReader(buf)).Lint()
+	if err != nil {
+		t.Fatalf("failed to lint metrics: %v", err)
+	}
+
+	if len(problems) > 0 {
+		for _, p := range problems {
+			t.Logf("\t%s: %s", p.Metric, p.Text)
+		}
+
+		t.Fatal("failing test due to lint problems")
+	}
+
+	// Metrics check out, return to caller for further tests.
+	return buf
+}
+
+func TestCollector(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (conntrack.MarkZoneAggregator, error)
-		operations  []func(conntrack.MarkZoneAggregator) error
-		validate    func(*testing.T, *conntrackCollector)
+		setup       func() (MarkZoneAggregator, error)
+		operations  []func(MarkZoneAggregator) error
+		validate    func(*testing.T, *Collector)
 		wantErr     bool
 		skipOnError bool
 		description string
 	}{
 		{
 			name: "real_aggregator_creation",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error { return agg.Start() },
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
 				}
@@ -49,11 +97,11 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "nil_aggregator_handling",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
+			setup: func() (MarkZoneAggregator, error) {
 				return nil, nil
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			operations: []func(MarkZoneAggregator) error{},
+			validate: func(t *testing.T, collector *Collector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
 				}
@@ -69,18 +117,18 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "real_data_processing",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error { return agg.Start() },
+				func(agg MarkZoneAggregator) error {
 					// Let it run briefly to potentially collect real data
 					time.Sleep(50 * time.Millisecond)
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
 					t.Fatal("expected non-nil snapshot")
@@ -94,9 +142,9 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name:       "concurrent_collection",
-			setup:      func() (conntrack.MarkZoneAggregator, error) { return conntrack.NewZoneMarkAggregator() },
-			operations: []func(conntrack.MarkZoneAggregator) error{func(agg conntrack.MarkZoneAggregator) error { return agg.Start() }},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			setup:      func() (MarkZoneAggregator, error) { return NewZoneMarkAggregator() },
+			operations: []func(MarkZoneAggregator) error{func(agg MarkZoneAggregator) error { return agg.Start() }},
+			validate: func(t *testing.T, collector *Collector) {
 				var wg sync.WaitGroup
 				wg.Add(10)
 				for i := 0; i < 10; i++ {
@@ -116,23 +164,23 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "lifecycle_management",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error { return agg.Start() },
+				func(agg MarkZoneAggregator) error {
 					// Let it run briefly
 					time.Sleep(10 * time.Millisecond)
 					return nil
 				},
-				func(agg conntrack.MarkZoneAggregator) error {
+				func(agg MarkZoneAggregator) error {
 					// Stop the aggregator
 					agg.Stop()
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				// Snapshot should still work after stop
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
@@ -152,7 +200,7 @@ func TestConntrackCollector(t *testing.T) {
 				if tt.skipOnError {
 					t.Logf("Skipping test due to expected failure: %v", err)
 					// Test with nil aggregator to ensure collector handles gracefully
-					collector := newConntrackCollector(nil)
+					collector := &Collector{agg: nil}
 					testCollector(t, collector)
 					return
 				}
@@ -169,7 +217,7 @@ func TestConntrackCollector(t *testing.T) {
 					if tt.skipOnError {
 						t.Logf("Skipping test due to operation %d failure: %v", i, err)
 						// Test with nil aggregator as fallback
-						collector := newConntrackCollector(nil)
+						collector := &Collector{agg: nil}
 						testCollector(t, collector)
 						return
 					}
@@ -178,9 +226,9 @@ func TestConntrackCollector(t *testing.T) {
 				}
 			}
 
-			collector := newConntrackCollector(agg)
+			collector := &Collector{agg: agg}
 			if tt.validate != nil {
-				tt.validate(t, collector.(*conntrackCollector))
+				tt.validate(t, collector)
 			}
 
 			// Test the collector with Prometheus
@@ -189,7 +237,7 @@ func TestConntrackCollector(t *testing.T) {
 	}
 }
 
-func TestConntrackCollectorWithRealData(t *testing.T) {
+func TestCollectorWithRealData(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping conntrack test in short mode")
 	}
@@ -197,13 +245,13 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 	tests := []struct {
 		name        string
 		duration    time.Duration
-		validate    func(*testing.T, *conntrackCollector)
+		validate    func(*testing.T, *Collector)
 		description string
 	}{
 		{
 			name:     "short_duration",
 			duration: 100 * time.Millisecond,
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
 					t.Fatal("expected non-nil snapshot")
@@ -215,7 +263,7 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 		{
 			name:     "medium_duration",
 			duration: 500 * time.Millisecond,
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
 					t.Fatal("expected non-nil snapshot")
@@ -229,7 +277,7 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test with real conntrack data if available
-			agg, err := conntrack.NewZoneMarkAggregator()
+			agg, err := NewZoneMarkAggregator()
 			if err != nil {
 				t.Skipf("Skipping real data test: %v", err)
 			}
@@ -244,9 +292,9 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 			// Wait for data to accumulate
 			time.Sleep(tt.duration)
 
-			collector := newConntrackCollector(agg)
+			collector := &Collector{agg: agg}
 			if tt.validate != nil {
-				tt.validate(t, collector.(*conntrackCollector))
+				tt.validate(t, collector)
 			}
 
 			// Test the collector with Prometheus
@@ -255,34 +303,34 @@ func TestConntrackCollectorWithRealData(t *testing.T) {
 	}
 }
 
-func TestConntrackCollectorEdgeCases(t *testing.T) {
+func TestCollectorEdgeCases(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (conntrack.MarkZoneAggregator, error)
-		operations  []func(conntrack.MarkZoneAggregator) error
-		validate    func(*testing.T, *conntrackCollector)
+		setup       func() (MarkZoneAggregator, error)
+		operations  []func(MarkZoneAggregator) error
+		validate    func(*testing.T, *Collector)
 		wantErr     bool
 		skipOnError bool
 		description string
 	}{
 		{
 			name: "start_stop_multiple_times",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error { return agg.Start() },
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error { return agg.Start() },
+				func(agg MarkZoneAggregator) error {
 					time.Sleep(10 * time.Millisecond)
 					agg.Stop()
 					return nil
 				},
-				func(agg conntrack.MarkZoneAggregator) error {
+				func(agg MarkZoneAggregator) error {
 					// Try to start again after stop
 					return agg.Start()
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				// Should handle restart gracefully
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
@@ -295,11 +343,11 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 		},
 		{
 			name: "rapid_start_stop_cycles",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error {
 					// Rapid start/stop cycles
 					for i := 0; i < 5; i++ {
 						if err := agg.Start(); err != nil {
@@ -312,7 +360,7 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				// Should not panic or leak resources
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
@@ -352,9 +400,9 @@ func TestConntrackCollectorEdgeCases(t *testing.T) {
 				}
 			}
 
-			collector := newConntrackCollector(agg)
+			collector := &Collector{agg: agg}
 			if tt.validate != nil {
-				tt.validate(t, collector.(*conntrackCollector))
+				tt.validate(t, collector)
 			}
 
 			// Test the collector with Prometheus

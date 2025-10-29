@@ -1,41 +1,89 @@
 //go:build !linux
 // +build !linux
 
-package ovsexporter
+package conntrack
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/prometheus/util/promlint"
 )
 
-func TestConntrackCollector(t *testing.T) {
+func testCollector(t *testing.T, collector prometheus.Collector) []byte {
+	t.Helper()
+
+	// Set up and gather metrics from a single pass.
+	reg := prometheus.NewPedanticRegistry()
+	if err := reg.Register(collector); err != nil {
+		t.Fatalf("failed to register Prometheus collector: %v", err)
+	}
+
+	srv := httptest.NewServer(promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to GET data from prometheus: %v", err)
+	}
+	defer resp.Body.Close()
+
+	buf, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read server response: %v", err)
+	}
+
+	// Check for lint cleanliness of metrics.
+	problems, err := promlint.New(bytes.NewReader(buf)).Lint()
+	if err != nil {
+		t.Fatalf("failed to lint metrics: %v", err)
+	}
+
+	if len(problems) > 0 {
+		for _, p := range problems {
+			t.Logf("\t%s: %s", p.Metric, p.Text)
+		}
+
+		t.Fatal("failing test due to lint problems")
+	}
+
+	// Metrics check out, return to caller for further tests.
+	return buf
+}
+
+func TestCollector(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (conntrack.MarkZoneAggregator, error)
-		operations  []func(conntrack.MarkZoneAggregator) error
-		validate    func(*testing.T, *conntrackCollector)
+		setup       func() (MarkZoneAggregator, error)
+		operations  []func(MarkZoneAggregator) error
+		validate    func(*testing.T, *Collector)
 		wantErr     bool
 		description string
 	}{
 		{
 			name: "basic_functionality",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error {
 					// Add test data
-					mockAgg := agg.(*conntrack.MockZoneMarkAggregator)
+					mockAgg := agg.(*MockZoneMarkAggregator)
 					mockAgg.SetCount(0, 100, 1500)
 					mockAgg.SetCount(0, 200, 2500)
 					mockAgg.SetCount(1, 300, 3500)
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
 				}
@@ -48,11 +96,11 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "nil_aggregator",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
+			setup: func() (MarkZoneAggregator, error) {
 				return nil, nil
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			operations: []func(MarkZoneAggregator) error{},
+			validate: func(t *testing.T, collector *Collector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
 				}
@@ -65,11 +113,11 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "empty_aggregator",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			operations: []func(MarkZoneAggregator) error{},
+			validate: func(t *testing.T, collector *Collector) {
 				if collector == nil {
 					t.Fatal("expected non-nil collector")
 				}
@@ -86,13 +134,13 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "large_dataset",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error {
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error {
 					// Add large dataset - simulate 10K entries across multiple zones
-					mockAgg := agg.(*conntrack.MockZoneMarkAggregator)
+					mockAgg := agg.(*MockZoneMarkAggregator)
 					for zone := uint16(0); zone < 10; zone++ {
 						for mark := uint32(0); mark < 1000; mark++ {
 							mockAgg.SetCount(zone, mark, int(uint32(zone)*1000+mark))
@@ -101,7 +149,7 @@ func TestConntrackCollector(t *testing.T) {
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				if len(snapshot) != 10000 {
 					t.Errorf("expected 10000 entries, got %d", len(snapshot))
@@ -112,12 +160,12 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name: "edge_cases",
-			setup: func() (conntrack.MarkZoneAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (MarkZoneAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error {
-					mockAgg := agg.(*conntrack.MockZoneMarkAggregator)
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error {
+					mockAgg := agg.(*MockZoneMarkAggregator)
 					// Test zero values
 					mockAgg.SetCount(0, 0, 0)
 					// Test maximum values
@@ -127,7 +175,7 @@ func TestConntrackCollector(t *testing.T) {
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				// Should have 2 entries (zero and negative counts should be filtered out)
 				if len(snapshot) != 2 {
@@ -139,15 +187,15 @@ func TestConntrackCollector(t *testing.T) {
 		},
 		{
 			name:  "concurrent_operations",
-			setup: func() (conntrack.MarkZoneAggregator, error) { return conntrack.NewMockZoneMarkAggregator() },
-			operations: []func(conntrack.MarkZoneAggregator) error{
-				func(agg conntrack.MarkZoneAggregator) error {
-					mockAgg := agg.(*conntrack.MockZoneMarkAggregator)
+			setup: func() (MarkZoneAggregator, error) { return NewMockZoneMarkAggregator() },
+			operations: []func(MarkZoneAggregator) error{
+				func(agg MarkZoneAggregator) error {
+					mockAgg := agg.(*MockZoneMarkAggregator)
 					mockAgg.SetCount(0, 100, 100)
 					return nil
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				var wg sync.WaitGroup
 				wg.Add(10)
 				for i := 0; i < 10; i++ {
@@ -185,9 +233,9 @@ func TestConntrackCollector(t *testing.T) {
 				}
 			}
 
-			collector := newConntrackCollector(agg)
+			collector := &Collector{agg: agg}
 			if tt.validate != nil {
-				tt.validate(t, collector.(*conntrackCollector))
+				tt.validate(t, collector)
 			}
 
 			// Test the collector with Prometheus
@@ -199,30 +247,30 @@ func TestConntrackCollector(t *testing.T) {
 func TestMockAggregatorOperations(t *testing.T) {
 	tests := []struct {
 		name        string
-		operations  []func(*conntrack.MockZoneMarkAggregator)
-		validate    func(*testing.T, *conntrack.MockZoneMarkAggregator)
+		operations  []func(*MockZoneMarkAggregator)
+		validate    func(*testing.T, *MockZoneMarkAggregator)
 		description string
 	}{
 		{
 			name: "add_remove_entries",
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					agg.AddEntry(0, 100)
 					agg.AddEntry(0, 100)
 					agg.AddEntry(1, 200)
 				},
-				func(agg *conntrack.MockZoneMarkAggregator) {
+				func(agg *MockZoneMarkAggregator) {
 					agg.RemoveEntry(0, 100)
 				},
 			},
-			validate: func(t *testing.T, agg *conntrack.MockZoneMarkAggregator) {
+			validate: func(t *testing.T, agg *MockZoneMarkAggregator) {
 				snapshot := agg.Snapshot()
 				if len(snapshot) != 2 {
 					t.Errorf("expected 2 entries, got %d", len(snapshot))
 				}
 				// Check specific counts
-				key1 := conntrack.ZoneMarkKey{Zone: 0, Mark: 100}
-				key2 := conntrack.ZoneMarkKey{Zone: 1, Mark: 200}
+				key1 := ZoneMarkKey{Zone: 0, Mark: 100}
+				key2 := ZoneMarkKey{Zone: 1, Mark: 200}
 				if snapshot[key1] != 1 {
 					t.Errorf("expected count 1 for key %v, got %d", key1, snapshot[key1])
 				}
@@ -234,20 +282,20 @@ func TestMockAggregatorOperations(t *testing.T) {
 		},
 		{
 			name: "set_count_operations",
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					agg.SetCount(0, 100, 1500)
 					agg.SetCount(1, 200, 2500)
 					agg.SetCount(2, 300, 0) // Should be filtered out
 				},
 			},
-			validate: func(t *testing.T, agg *conntrack.MockZoneMarkAggregator) {
+			validate: func(t *testing.T, agg *MockZoneMarkAggregator) {
 				snapshot := agg.Snapshot()
 				if len(snapshot) != 2 {
 					t.Errorf("expected 2 entries, got %d", len(snapshot))
 				}
-				key1 := conntrack.ZoneMarkKey{Zone: 0, Mark: 100}
-				key2 := conntrack.ZoneMarkKey{Zone: 1, Mark: 200}
+				key1 := ZoneMarkKey{Zone: 0, Mark: 100}
+				key2 := ZoneMarkKey{Zone: 1, Mark: 200}
 				if snapshot[key1] != 1500 {
 					t.Errorf("expected count 1500 for key %v, got %d", key1, snapshot[key1])
 				}
@@ -259,16 +307,16 @@ func TestMockAggregatorOperations(t *testing.T) {
 		},
 		{
 			name: "clear_operations",
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					agg.SetCount(0, 100, 1500)
 					agg.SetCount(1, 200, 2500)
 				},
-				func(agg *conntrack.MockZoneMarkAggregator) {
+				func(agg *MockZoneMarkAggregator) {
 					agg.Clear()
 				},
 			},
-			validate: func(t *testing.T, agg *conntrack.MockZoneMarkAggregator) {
+			validate: func(t *testing.T, agg *MockZoneMarkAggregator) {
 				snapshot := agg.Snapshot()
 				if len(snapshot) != 0 {
 					t.Errorf("expected empty snapshot after clear, got %d entries", len(snapshot))
@@ -278,12 +326,12 @@ func TestMockAggregatorOperations(t *testing.T) {
 		},
 		{
 			name: "health_metrics",
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					agg.SetCount(0, 100, 1000)
 				},
 			},
-			validate: func(t *testing.T, agg *conntrack.MockZoneMarkAggregator) {
+			validate: func(t *testing.T, agg *MockZoneMarkAggregator) {
 				if !agg.IsHealthy() {
 					t.Error("expected healthy aggregator")
 				}
@@ -304,7 +352,7 @@ func TestMockAggregatorOperations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agg, err := conntrack.NewMockZoneMarkAggregator()
+			agg, err := NewMockZoneMarkAggregator()
 			if err != nil {
 				t.Fatalf("Failed to create mock aggregator: %v", err)
 			}
@@ -323,36 +371,36 @@ func TestMockAggregatorOperations(t *testing.T) {
 	}
 }
 
-func TestConntrackCollectorIntegration(t *testing.T) {
+func TestCollectorIntegration(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() (*conntrack.MockZoneMarkAggregator, error)
-		operations  []func(*conntrack.MockZoneMarkAggregator)
-		validate    func(*testing.T, *conntrackCollector)
+		setup       func() (*MockZoneMarkAggregator, error)
+		operations  []func(*MockZoneMarkAggregator)
+		validate    func(*testing.T, *Collector)
 		description string
 	}{
 		{
 			name: "full_lifecycle",
-			setup: func() (*conntrack.MockZoneMarkAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (*MockZoneMarkAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					// Start the aggregator
 					agg.Start()
 				},
-				func(agg *conntrack.MockZoneMarkAggregator) {
+				func(agg *MockZoneMarkAggregator) {
 					// Add some data
 					agg.SetCount(0, 100, 1500)
 					agg.SetCount(1, 200, 2500)
 				},
-				func(agg *conntrack.MockZoneMarkAggregator) {
+				func(agg *MockZoneMarkAggregator) {
 					// Modify data
 					agg.AddEntry(0, 100)
 					agg.RemoveEntry(1, 200)
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				// Test that collector can handle the aggregator
 				snapshot := collector.agg.Snapshot()
 				if snapshot == nil {
@@ -367,18 +415,18 @@ func TestConntrackCollectorIntegration(t *testing.T) {
 		},
 		{
 			name: "stress_test",
-			setup: func() (*conntrack.MockZoneMarkAggregator, error) {
-				return conntrack.NewMockZoneMarkAggregator()
+			setup: func() (*MockZoneMarkAggregator, error) {
+				return NewMockZoneMarkAggregator()
 			},
-			operations: []func(*conntrack.MockZoneMarkAggregator){
-				func(agg *conntrack.MockZoneMarkAggregator) {
+			operations: []func(*MockZoneMarkAggregator){
+				func(agg *MockZoneMarkAggregator) {
 					// Add many entries rapidly
 					for i := 0; i < 1000; i++ {
 						agg.SetCount(uint16(i%10), uint32(i), i)
 					}
 				},
 			},
-			validate: func(t *testing.T, collector *conntrackCollector) {
+			validate: func(t *testing.T, collector *Collector) {
 				snapshot := collector.agg.Snapshot()
 				if len(snapshot) != 1000 {
 					t.Errorf("expected 1000 entries, got %d", len(snapshot))
@@ -402,9 +450,9 @@ func TestConntrackCollectorIntegration(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 
-			collector := newConntrackCollector(agg)
+			collector := &Collector{agg: agg}
 			if tt.validate != nil {
-				tt.validate(t, collector.(*conntrackCollector))
+				tt.validate(t, collector)
 			}
 
 			// Test with Prometheus

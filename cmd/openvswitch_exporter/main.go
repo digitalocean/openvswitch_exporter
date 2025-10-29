@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/digitalocean/go-openvswitch/ovsnl"
+	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
 	"github.com/digitalocean/openvswitch_exporter/internal/ovsexporter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -22,8 +23,9 @@ import (
 
 func main() {
 	var (
-		metricsAddr = flag.String("metrics.addr", ":9310", "address for Open vSwitch exporter")
-		metricsPath = flag.String("metrics.path", "/metrics", "URL path for surfacing collected metrics")
+		metricsAddr     = flag.String("metrics.addr", ":9310", "address for Open vSwitch exporter")
+		metricsPath     = flag.String("metrics.path", "/metrics", "URL path for surfacing collected metrics")
+		enableConntrack = flag.Bool("enable.conntrack", true, "enable conntrack metrics exporter")
 	)
 
 	flag.Parse()
@@ -36,6 +38,19 @@ func main() {
 
 	collector := ovsexporter.New(c)
 	prometheus.MustRegister(collector)
+
+	// Optionally register conntrack collector
+	var conntrackAggregator conntrack.MarkZoneAggregator
+	if *enableConntrack {
+		conntrackCollector, agg, err := conntrack.NewCollector()
+		if err != nil {
+			log.Printf("Warning: Failed to create conntrack collector: %v", err)
+		} else {
+			prometheus.MustRegister(conntrackCollector)
+			conntrackAggregator = agg
+			log.Printf("Conntrack metrics exporter enabled")
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle(*metricsPath, promhttp.Handler())
@@ -90,10 +105,10 @@ func main() {
 		log.Printf("Server shutdown error: %v", err)
 	}
 
-	// Close collector if it supports graceful shutdown
-	if closeable, ok := collector.(interface{ Close() error }); ok {
-		if err := closeable.Close(); err != nil {
-			log.Printf("Collector shutdown error: %v", err)
+	// Stop conntrack aggregator if it was enabled
+	if conntrackAggregator != nil {
+		if err := conntrackAggregator.Stop(); err != nil {
+			log.Printf("Conntrack aggregator shutdown error: %v", err)
 		}
 	}
 

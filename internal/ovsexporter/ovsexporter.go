@@ -6,11 +6,9 @@
 package ovsexporter
 
 import (
-	"log"
 	"sync"
 
 	"github.com/digitalocean/go-openvswitch/ovsnl"
-	"github.com/digitalocean/openvswitch_exporter/internal/conntrack"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -20,9 +18,8 @@ const (
 
 // A collector aggregates Open vSwitch Prometheus collectors.
 type collector struct {
-	mu                  sync.Mutex
-	cs                  []prometheus.Collector
-	conntrackAggregator conntrack.MarkZoneAggregator
+	mu sync.Mutex
+	cs []prometheus.Collector
 }
 
 // Make sure collector implements prometheus.Collector
@@ -34,19 +31,7 @@ func New(c *ovsnl.Client) prometheus.Collector {
 	collectors := []prometheus.Collector{
 		newDatapathCollector(c.Datapath.List),
 	}
-
-	// Create the aggregator
-	agg, err := conntrack.NewZoneMarkAggregator()
-	if err != nil {
-		log.Printf("Warning: Failed to create zone/mark aggregator: %v", err)
-		return &collector{cs: collectors}
-	}
-	if err := agg.Start(); err != nil {
-		log.Printf("Warning: Failed to start zone/mark aggregator: %v", err)
-		return &collector{cs: collectors}
-	}
-	collectors = append(collectors, newConntrackCollector(agg))
-	return &collector{cs: collectors, conntrackAggregator: agg}
+	return &collector{cs: collectors}
 }
 
 // Describe implements prometheus.Collector.
@@ -67,20 +52,4 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	for _, cc := range c.cs {
 		cc.Collect(ch)
 	}
-}
-
-// Close cleans up resources with graceful shutdown
-func (c *collector) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.conntrackAggregator != nil {
-		if err := c.conntrackAggregator.Stop(); err != nil {
-			log.Printf("Error stopping aggregator: %v", err)
-			return err
-		}
-		log.Printf("Collector closed gracefully")
-	}
-
-	return nil
 }
