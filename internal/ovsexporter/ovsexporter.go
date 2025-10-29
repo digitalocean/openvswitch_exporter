@@ -23,7 +23,7 @@ type collector struct {
 	mu               sync.Mutex
 	cs               []prometheus.Collector
 	conntrackEnabled bool
-	aggregator       conntrack.Aggregator
+	conntrack.Aggregator       conntrack.Aggregator
 }
 
 // Make sure collector implements prometheus.Collector
