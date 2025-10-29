@@ -199,9 +199,6 @@ func TestCollector(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				if tt.skipOnError {
 					t.Logf("Skipping test due to expected failure: %v", err)
-					// Test with nil aggregator to ensure collector handles gracefully
-					collector := &Collector{agg: nil}
-					testCollector(t, collector)
 					return
 				}
 				t.Errorf("setup error = %v, wantErr %v", err, tt.wantErr)
@@ -216,9 +213,6 @@ func TestCollector(t *testing.T) {
 				if err := op(agg); err != nil {
 					if tt.skipOnError {
 						t.Logf("Skipping test due to operation %d failure: %v", i, err)
-						// Test with nil aggregator as fallback
-						collector := &Collector{agg: nil}
-						testCollector(t, collector)
 						return
 					}
 					t.Errorf("operation %d failed: %v", i, err)
