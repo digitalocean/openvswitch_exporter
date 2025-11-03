@@ -42,12 +42,16 @@ func main() {
 	// Optionally register conntrack collector
 	var conntrackAggregator conntrack.MarkZoneAggregator
 	if *enableConntrack {
-		conntrackCollector, agg, err := conntrack.NewCollector()
+		conntrackCollector, conntrackAggregator, err := conntrack.NewCollector()
 		if err != nil {
 			log.Printf("Warning: Failed to create conntrack collector: %v", err)
 		} else {
 			prometheus.MustRegister(conntrackCollector)
-			conntrackAggregator = agg
+			defer func() {
+				if err := conntrackAggregator.Stop(); err != nil {
+					log.Printf("Conntrack aggregator shutdown error: %v", err)
+				}
+			}
 			log.Printf("Conntrack metrics exporter enabled")
 		}
 	}
@@ -105,12 +109,6 @@ func main() {
 		log.Printf("Server shutdown error: %v", err)
 	}
 
-	// Stop conntrack aggregator if it was enabled
-	if conntrackAggregator != nil {
-		if err := conntrackAggregator.Stop(); err != nil {
-			log.Printf("Conntrack aggregator shutdown error: %v", err)
-		}
-	}
 
 	log.Printf("Exporter stopped")
 }
