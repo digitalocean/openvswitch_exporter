@@ -341,20 +341,13 @@ func (a *ZoneMarkAggregator) performHealthCheck() error {
 	return nil
 }
 
-// GetError returns any error from the errgroup if available
-func (a *ZoneMarkAggregator) GetError() error {
-	// This is a non-blocking way to check if there are any errors
-	// The actual error handling happens in Stop()
-	return nil
-}
-
 // Stop cancels listening and closes the connection with graceful shutdown.
 func (a *ZoneMarkAggregator) Stop() error {
-	return a.StopWithTimeout(a.config.GracefulTimeout)
+	return a.stopWithTimeout(a.config.GracefulTimeout)
 }
 
 // StopWithTimeout cancels listening and closes the connection with a configurable timeout.
-func (a *ZoneMarkAggregator) StopWithTimeout(timeout time.Duration) error {
+func (a *ZoneMarkAggregator) stopWithTimeout(timeout time.Duration) error {
 	// Signal shutdown to all goroutines
 	a.cancel()
 

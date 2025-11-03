@@ -40,7 +40,6 @@ func main() {
 	prometheus.MustRegister(collector)
 
 	// Optionally register conntrack collector
-	var conntrackAggregator conntrack.MarkZoneAggregator
 	if *enableConntrack {
 		conntrackCollector, conntrackAggregator, err := conntrack.NewCollector()
 		if err != nil {
@@ -48,10 +47,12 @@ func main() {
 		} else {
 			prometheus.MustRegister(conntrackCollector)
 			defer func() {
-				if err := conntrackAggregator.Stop(); err != nil {
-					log.Printf("Conntrack aggregator shutdown error: %v", err)
+				if conntrackAggregator != nil {
+					if err := conntrackAggregator.Stop(); err != nil {
+						log.Printf("Conntrack aggregator shutdown error: %v", err)
+					}
 				}
-			}
+			}()
 			log.Printf("Conntrack metrics exporter enabled")
 		}
 	}
@@ -70,12 +71,7 @@ func main() {
 
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan,
-		syscall.SIGINT,  // Ctrl+C
-		syscall.SIGTERM, // Termination request
-		syscall.SIGHUP,  // Hang up (config reload)
-		syscall.SIGQUIT, // Quit signal
-	)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start server in goroutine
 	go func() {
@@ -87,19 +83,7 @@ func main() {
 
 	// Wait for shutdown signal
 	sig := <-sigChan
-
-	switch sig {
-	case syscall.SIGHUP:
-		log.Printf("Received SIGHUP, reloading config...")
-		// TODO: Add config reload logic here
-		log.Printf("Config reloaded")
-		return
-	case syscall.SIGQUIT:
-		log.Printf("Received SIGQUIT, shutting down immediately...")
-		// Immediate shutdown for SIGQUIT
-	default:
-		log.Printf("Received signal %v, stopping gracefully...", sig)
-	}
+	log.Printf("Received signal %v, stopping gracefully...", sig)
 
 	// Graceful shutdown with 15 second timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -108,7 +92,6 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
-
 
 	log.Printf("Exporter stopped")
 }

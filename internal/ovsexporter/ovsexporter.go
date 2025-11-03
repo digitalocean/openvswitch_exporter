@@ -22,16 +22,17 @@ type collector struct {
 	cs []prometheus.Collector
 }
 
-// Make sure collector implements prometheus.Collector
 var _ prometheus.Collector = &collector{}
 
 // New creates a new Prometheus collector which collects metrics using the
 // input Open vSwitch generic netlink client.
 func New(c *ovsnl.Client) prometheus.Collector {
-	collectors := []prometheus.Collector{
-		newDatapathCollector(c.Datapath.List),
+	return &collector{
+		cs: []prometheus.Collector{
+			// Additional generic netlink family collectors can be added here.
+			newDatapathCollector(c.Datapath.List),
+		},
 	}
-	return &collector{cs: collectors}
 }
 
 // Describe implements prometheus.Collector.
