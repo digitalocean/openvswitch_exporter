@@ -1,0 +1,71 @@
+// Copyright 2017 DigitalOcean.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package conntrack
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/ti-mo/conntrack"
+	"golang.org/x/sync/errgroup"
+)
+
+// ZoneMarkAggregator keeps live counts (zmKey -> count) with bounded ingestion
+type ZoneMarkAggregator struct {
+	// Configuration
+	config *Config
+
+	// primary counts (zmKey -> count) - simplified flat mapping
+	counts    map[ZoneMarkKey]int
+	countsMu  sync.RWMutex
+	eventRate float64
+
+	// conntrack listening connection
+	listenCli  *conntrack.Conn
+	listenerMu sync.Mutex // Protects listener restart operations
+
+	// lifecycle
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     errgroup.Group
+
+	// bounded event ingestion
+	eventsCh chan conntrack.Event
+
+	// aggregated DESTROY deltas (bounded by destroyDeltaCap)
+	deltaMu       sync.Mutex
+	destroyDeltas map[ZoneMarkKey]int
+
+	// metrics / health
+	eventCount      atomic.Int64
+	lastEventTime   time.Time
+	missedEvents    atomic.Int64
+	lastHealthCheck time.Time
+}
+
+// ZoneMarkKey is a compact key for (zone,mark)
+type ZoneMarkKey struct {
+	Zone uint16
+	Mark uint32
+}
+
+// MarkZoneAggregator interface defines the methods needed by the collector
+type MarkZoneAggregator interface {
+	Snapshot() map[ZoneMarkKey]int
+	Stop() error
+	Start() error
+}

@@ -1,0 +1,423 @@
+// Copyright 2017 DigitalOcean.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build linux
+
+package conntrack
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/ti-mo/conntrack"
+	"github.com/ti-mo/netfilter"
+)
+
+// Compile-time assertion that *ZoneMarkAggregator implements MarkZoneAggregator
+var _ MarkZoneAggregator = (*ZoneMarkAggregator)(nil)
+
+//
+// Conntrack aggregator with bounded ingestion + DESTROY aggregation
+// to handle massive bursts of conntrack DESTROY events without OOMing.
+//
+
+// NewZoneMarkAggregator creates a new aggregator with its own listening connection.
+func NewZoneMarkAggregator() (MarkZoneAggregator, error) {
+	return NewZoneMarkAggregatorWithConfig(DefaultConfig())
+}
+
+// NewZoneMarkAggregatorWithConfig creates a new aggregator with custom configuration.
+func NewZoneMarkAggregatorWithConfig(config *Config) (*ZoneMarkAggregator, error) {
+	// Create a separate connection for listening to events
+	listenCli, err := conntrack.Dial(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create listening connection: %w", err)
+	}
+
+	if err := listenCli.SetReadBuffer(config.ReadBufferSize); err != nil {
+		log.Printf("Warning: Failed to set read buffer size: %v", err)
+	}
+	if err := listenCli.SetWriteBuffer(config.WriteBufferSize); err != nil {
+		log.Printf("Warning: Failed to set write buffer size: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &ZoneMarkAggregator{
+		config:          config,
+		counts:          make(map[ZoneMarkKey]int),
+		listenCli:       listenCli,
+		ctx:             ctx,
+		cancel:          cancel,
+		eventsCh:        make(chan conntrack.Event, config.EventChanSize),
+		destroyDeltas:   make(map[ZoneMarkKey]int),
+		lastEventTime:   time.Now(),
+		lastHealthCheck: time.Now(),
+	}
+
+	return a, nil
+}
+
+// Start subscribes to NEW/DESTROY/UPDATE events and maintains counts with bounded ingestion.
+func (a *ZoneMarkAggregator) Start() error {
+
+	if err := a.startEventListener(); err != nil {
+		return err
+	}
+
+	for i := 0; i < a.config.EventWorkerCount; i++ {
+		a.wg.Go(func() error {
+			return a.eventWorker(a.ctx)
+		})
+	}
+
+	a.wg.Go(func() error {
+		return a.destroyFlusher(a.ctx)
+	})
+
+	a.wg.Go(func() error {
+		return a.startHealthMonitoring(a.ctx)
+	})
+
+	return nil
+}
+
+// startEventListener handles real-time conntrack events, pushing into bounded eventsCh.
+func (a *ZoneMarkAggregator) startEventListener() error {
+	libEvents := make(chan conntrack.Event, 8192)
+	groups := []netfilter.NetlinkGroup{
+		netfilter.GroupCTNew,
+		netfilter.GroupCTDestroy,
+		netfilter.GroupCTUpdate,
+	}
+
+	errCh, err := a.listenCli.Listen(libEvents, 50, groups)
+	if err != nil {
+		return fmt.Errorf("failed to listen to conntrack events: %w", err)
+	}
+
+	a.wg.Go(func() error {
+		eventCount := int64(0)
+		rateWindow := make([]time.Time, 0, 100)
+
+		for {
+			select {
+			case <-a.ctx.Done():
+				log.Printf("Stopping lib->bounded relay after %d lib events", eventCount)
+				return a.ctx.Err()
+			case e := <-errCh:
+				if e != nil {
+					log.Printf("conntrack listener error: %v", e)
+					a.missedEvents.Add(1)
+				}
+			case ev := <-libEvents:
+				select {
+				case a.eventsCh <- ev:
+					eventCount++
+					a.eventCount.Store(eventCount)
+					a.lastEventTime = time.Now()
+
+					rateWindow = append(rateWindow, a.lastEventTime)
+					if len(rateWindow) > 100 {
+						rateWindow = rateWindow[1:]
+					}
+					if len(rateWindow) > 1 {
+						duration := rateWindow[len(rateWindow)-1].Sub(rateWindow[0])
+						if duration > 0 {
+							a.eventRate = float64(len(rateWindow)-1) / duration.Seconds()
+						}
+					}
+				default:
+					a.missedEvents.Add(1)
+					if a.missedEvents.Load()%100 == 0 {
+						log.Printf("Warning: eventsCh full, missedEvents=%d", a.missedEvents.Load())
+					}
+				}
+			}
+		}
+	})
+
+	return nil
+}
+
+// eventWorker consumes events from eventsCh and handles them
+func (a *ZoneMarkAggregator) eventWorker(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev := <-a.eventsCh:
+			if err := a.handleEvent(ev); err != nil {
+				log.Printf("Error handling event: %v", err)
+				// Continue processing other events, but log the error
+			}
+		}
+	}
+}
+
+// handleEvent processes a single event.
+func (a *ZoneMarkAggregator) handleEvent(ev conntrack.Event) error {
+	f := ev.Flow
+	key := ZoneMarkKey{Zone: f.Zone, Mark: f.Mark}
+
+	if ev.Type == conntrack.EventNew {
+		a.countsMu.Lock()
+		defer a.countsMu.Unlock()
+		a.counts[key]++
+		return nil
+	}
+
+	if ev.Type == conntrack.EventDestroy {
+		a.deltaMu.Lock()
+		defer a.deltaMu.Unlock()
+		if len(a.destroyDeltas) < a.config.DestroyDeltaCap {
+			a.destroyDeltas[key]++
+			if len(a.destroyDeltas) > 50000 { // If we have >50K deltas, flush immediately
+				deltas := a.destroyDeltas
+				a.destroyDeltas = make(map[ZoneMarkKey]int)
+				// Acquire countsMu while still holding deltaMu to maintain lock ordering
+				a.countsMu.Lock()
+				defer a.countsMu.Unlock()
+				// Apply deltas immediately to minimize lag during extreme load
+				a.applyDeltasImmediatelyUnsafe(deltas)
+				return nil
+			}
+			// Log every 1000 DESTROY events to verify they're being received
+			if len(a.destroyDeltas)%1000 == 0 {
+				log.Printf("DESTROY events: %d entries in destroyDeltas (zone=%d, mark=%d)", len(a.destroyDeltas), key.Zone, key.Mark)
+			}
+		} else {
+			a.missedEvents.Add(1)
+			if a.missedEvents.Load()%a.config.DropsWarnThreshold == 0 {
+				log.Printf("Warning: destroyDeltas saturated (size=%d). missedEvents=%d", len(a.destroyDeltas), a.missedEvents.Load())
+			}
+		}
+		return nil
+	}
+
+	return nil
+}
+
+// applyDeltasImmediatelyUnsafe applies deltas immediately to minimize lag during extreme load
+// This method assumes countsMu is already held by the caller
+func (a *ZoneMarkAggregator) applyDeltasImmediatelyUnsafe(deltas map[ZoneMarkKey]int) {
+	for k, cnt := range deltas {
+		existing, ok := a.counts[k]
+		if !ok {
+			a.missedEvents.Add(int64(cnt))
+			continue
+		}
+		if existing <= cnt {
+			delete(a.counts, k)
+		} else {
+			a.counts[k] = existing - cnt
+		}
+	}
+}
+
+// destroyFlusher periodically applies the aggregated DESTROY deltas into counts
+// Uses adaptive flushing: more frequent during high event rates for minimal lag
+func (a *ZoneMarkAggregator) destroyFlusher(ctx context.Context) error {
+	ticker := time.NewTicker(a.config.DestroyFlushIntvl)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Destroy flusher stopping, final flush...")
+			a.flushDestroyDeltas()
+			return ctx.Err()
+		case <-ticker.C:
+			// Adaptive flushing: flush more frequently during high event rates
+			a.countsMu.RLock()
+			eventRate := a.eventRate
+			a.countsMu.RUnlock()
+
+			if eventRate > 500000 { // Very high event rate (>500K/sec)
+				// Flush immediately and reset ticker for faster interval
+				a.flushDestroyDeltas()
+				ticker.Reset(50 * time.Millisecond) // 50ms during extreme load
+			} else if eventRate > 100000 { // High event rate (>100K/sec)
+				a.flushDestroyDeltas()
+				ticker.Reset(100 * time.Millisecond) // 100ms during high load
+			} else if eventRate > 10000 { // Medium event rate (>10K/sec)
+				a.flushDestroyDeltas()
+				ticker.Reset(200 * time.Millisecond) // 200ms during medium load
+			} else {
+				// Normal flush
+				a.flushDestroyDeltas()
+				ticker.Reset(a.config.DestroyFlushIntvl) // Back to normal interval
+			}
+		}
+	}
+}
+
+// flushDestroyDeltas atomically swaps the delta map and applies decrements
+func (a *ZoneMarkAggregator) flushDestroyDeltas() {
+	// First acquire deltaMu to check and swap deltas
+	a.deltaMu.Lock()
+	defer a.deltaMu.Unlock()
+	if len(a.destroyDeltas) == 0 {
+		return
+	}
+	deltas := a.destroyDeltas
+	a.destroyDeltas = make(map[ZoneMarkKey]int)
+
+	// Now acquire countsMu while still holding deltaMu to ensure atomicity
+	a.countsMu.Lock()
+	defer a.countsMu.Unlock()
+
+	for k, cnt := range deltas {
+		existing, ok := a.counts[k]
+		if !ok {
+			a.missedEvents.Add(int64(cnt))
+			continue
+		}
+		if existing <= cnt {
+			delete(a.counts, k)
+		} else {
+			a.counts[k] = existing - cnt
+		}
+	}
+}
+
+// Snapshot returns a safe copy of counts.
+func (a *ZoneMarkAggregator) Snapshot() map[ZoneMarkKey]int {
+	a.flushDestroyDeltas()
+	a.countsMu.RLock()
+	defer a.countsMu.RUnlock()
+
+	out := make(map[ZoneMarkKey]int, len(a.counts))
+	for k, c := range a.counts {
+		if c > 0 {
+			out[k] = c
+		}
+	}
+	return out
+}
+
+// startHealthMonitoring periodically logs aggregator health
+func (a *ZoneMarkAggregator) startHealthMonitoring(ctx context.Context) error {
+	ticker := time.NewTicker(a.config.HealthCheckIntvl)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := a.performHealthCheck(); err != nil {
+				log.Printf("Health check error: %v", err)
+				// Continue monitoring even if health check fails
+			}
+		}
+	}
+}
+
+func (a *ZoneMarkAggregator) performHealthCheck() error {
+	missed := a.missedEvents.Load()
+
+	if missed > a.config.DropsWarnThreshold {
+		if err := a.RestartListener(); err != nil {
+			log.Printf("Health check: RestartListener failed: %v", err)
+			return fmt.Errorf("failed to restart listener: %w", err)
+		}
+		a.missedEvents.Store(0)
+		log.Printf("Health check: Listener restarted successfully")
+	}
+	a.lastHealthCheck = time.Now()
+	return nil
+}
+
+// Stop cancels listening and closes the connection with graceful shutdown.
+func (a *ZoneMarkAggregator) Stop() error {
+	return a.stopWithTimeout(a.config.GracefulTimeout)
+}
+
+// StopWithTimeout cancels listening and closes the connection with a configurable timeout.
+func (a *ZoneMarkAggregator) stopWithTimeout(timeout time.Duration) error {
+	// Signal shutdown to all goroutines
+	a.cancel()
+
+	// Create a context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Channel to receive shutdown completion
+	done := make(chan error, 1)
+
+	// Wait for goroutines to exit in a separate goroutine
+	go func() {
+		done <- a.wg.Wait()
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("Error from goroutine group during shutdown: %v", err)
+			// Continue with cleanup even if there were errors
+		}
+	case <-ctx.Done():
+		log.Printf("Graceful shutdown timeout exceeded (%v), forcing cleanup", timeout)
+		// Force close connections even if goroutines didn't exit cleanly
+	}
+
+	// Close the listening connection
+	if a.listenCli != nil {
+		if err := a.listenCli.Close(); err != nil {
+			log.Printf("Error closing listenCli during cleanup: %v", err)
+		}
+		a.listenCli = nil
+	}
+
+	// Final flush of any remaining deltas
+	a.flushDestroyDeltas()
+
+	log.Printf("MarkZoneAggregator stopped gracefully")
+	return nil
+}
+
+// RestartListener attempts to restart the conntrack event listener
+func (a *ZoneMarkAggregator) RestartListener() error {
+	a.listenerMu.Lock()
+	defer a.listenerMu.Unlock()
+
+	// Signal all goroutines to stop by canceling the context
+	a.cancel()
+
+	// Close the old connection to help goroutines exit faster
+	if a.listenCli != nil {
+		if err := a.listenCli.Close(); err != nil {
+			log.Printf("Warning: Error closing old listener connection: %v", err)
+		}
+	}
+
+	// Wait for all goroutines to exit cleanly
+	a.wg.Wait()
+
+	// Create a new context for the restarted goroutines
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+
+	// Create new connection
+	listenCli, err := conntrack.Dial(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create new listening connection: %w", err)
+	}
+	a.listenCli = listenCli
+
+	// Start new listener with fresh goroutines
+	return a.startEventListener()
+}
